@@ -103,8 +103,10 @@ test('sends through injected sender when configured', async () => {
   assert.equal(result.email_attempted, true);
   assert.equal(result.email_sent, true);
   assert.equal(result.message_id, 'msg_123');
-  assert.ok(sentPayload);
-  const payload = sentPayload as SendEmailPayload;
+  if (!sentPayload) {
+    throw new Error('Expected sentPayload to be captured by the fake sender.');
+  }
+  const payload: SendEmailPayload = sentPayload;
   assert.equal(payload.to, 'ops@example.com');
   assert.match(payload.subject, /\[Test Bot\]/);
   assert.match(payload.text, /call_send/);
