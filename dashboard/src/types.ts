@@ -10,6 +10,24 @@ export interface ToolDef {
   };
 }
 
+export interface AddressVerificationGuardrailResult {
+  plz: string | null;
+  house_number: string | null;
+  birthday: string | null;
+  missing_fields: Array<'plz' | 'house_number' | 'birthday'>;
+  confidence: 'high' | 'medium' | 'low';
+  safe_to_lookup: boolean;
+  next_action:
+    | 'ask_plz'
+    | 'ask_house_number'
+    | 'ask_birthday'
+    | 'confirm_values'
+    | 'lookup'
+    | 'fallback_to_vnr';
+  say_hint: string;
+  reason: string;
+}
+
 export interface CallLog {
   id: number;
   timestamp: string;

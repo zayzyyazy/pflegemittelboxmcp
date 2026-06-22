@@ -1,6 +1,10 @@
 import { useEffect, useState } from 'react';
 import { fetchTools, fetchLogs, testTool } from '../api';
-import type { ToolDef, CallLog } from '../types';
+import type {
+  ToolDef,
+  CallLog,
+  AddressVerificationGuardrailResult,
+} from '../types';
 
 interface TestState {
   input: Record<string, string>;
@@ -12,6 +16,39 @@ interface TestState {
 
 function emptyTest(): TestState {
   return { input: {}, running: false, result: null, error: null, duration: null };
+}
+
+function isGuardrailResult(value: unknown): value is AddressVerificationGuardrailResult {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'plz' in value &&
+    'house_number' in value &&
+    'birthday' in value &&
+    'missing_fields' in value &&
+    'safe_to_lookup' in value &&
+    'next_action' in value &&
+    'say_hint' in value &&
+    'confidence' in value &&
+    'reason' in value
+  );
+}
+
+function buildToolInput(toolName: string, input: Record<string, string>) {
+  if (toolName !== 'pmb_address_verification_guardrail') return input;
+
+  const nullable = (value: string | undefined) => {
+    const trimmed = value?.trim() ?? '';
+    return trimmed ? trimmed : null;
+  };
+
+  return {
+    raw_text: input.raw_text ?? '',
+    known_plz: nullable(input.known_plz),
+    known_house_number: nullable(input.known_house_number),
+    known_birthday: nullable(input.known_birthday),
+    attempt: Number(input.attempt ?? '1'),
+  };
 }
 
 export default function ToolsPage() {
@@ -44,7 +81,7 @@ export default function ToolsPage() {
   async function runTest(tool: ToolDef) {
     setTestStates((prev) => ({ ...prev, [tool.name]: { ...prev[tool.name], running: true, result: null, error: null, duration: null } }));
     try {
-      const res = await testTool(tool.name, testStates[tool.name].input);
+      const res = await testTool(tool.name, buildToolInput(tool.name, testStates[tool.name].input));
       setTestStates((prev) => ({
         ...prev,
         [tool.name]: { ...prev[tool.name], running: false, result: res.output, error: null, duration: res.duration_ms },
@@ -129,6 +166,11 @@ export default function ToolsPage() {
                           Example: <code>L wie Ludwig null drei neun drei fünf neun neun zwei drei</code>
                         </div>
                       )}
+                      {tool.name === 'pmb_address_verification_guardrail' && field === 'raw_text' && (
+                        <div className="field-hint">
+                          Example: <code>22765, Hausnummer 14, geboren am dritten fünften achtundvierzig</code>
+                        </div>
+                      )}
                     </div>
                   ))}
 
@@ -150,6 +192,23 @@ export default function ToolsPage() {
                         </span>
                       )}
                     </h4>
+                    {tool.name === 'pmb_address_verification_guardrail' &&
+                      !ts.error &&
+                      isGuardrailResult(ts.result) && (
+                        <div className="schema-block" style={{ marginBottom: 12 }}>
+                          <strong style={{ color: 'var(--text-label)' }}>Parsed summary</strong>
+                          <div>raw input: <span style={{ color: 'var(--text-muted)' }}>{ts.input.raw_text || '—'}</span></div>
+                          <div>parsed PLZ: <span style={{ color: '#6baed6' }}>{ts.result.plz ?? 'null'}</span></div>
+                          <div>parsed house number: <span style={{ color: '#6baed6' }}>{ts.result.house_number ?? 'null'}</span></div>
+                          <div>parsed birthday: <span style={{ color: '#6baed6' }}>{ts.result.birthday ?? 'null'}</span></div>
+                          <div>missing fields: <span style={{ color: '#74c476' }}>{ts.result.missing_fields.length ? ts.result.missing_fields.join(', ') : 'none'}</span></div>
+                          <div>safe_to_lookup: <span style={{ color: ts.result.safe_to_lookup ? '#74c476' : '#fdae6b' }}>{String(ts.result.safe_to_lookup)}</span></div>
+                          <div>next_action: <span style={{ color: '#6baed6' }}>{ts.result.next_action}</span></div>
+                          <div>say_hint: <span style={{ color: 'var(--text-muted)' }}>{ts.result.say_hint}</span></div>
+                          <div>confidence: <span style={{ color: '#74c476' }}>{ts.result.confidence}</span></div>
+                          <div>reason: <span style={{ color: 'var(--text-muted)' }}>{ts.result.reason}</span></div>
+                        </div>
+                      )}
                     <pre className={`json-block ${ts.error ? 'error' : ''}`}>
                       {ts.error
                         ? `Error: ${ts.error}`

@@ -15,8 +15,26 @@
  */
 import express, { Router, Request, Response } from 'express';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
+import { appConfig } from '../config.js';
 import { createMcpServer, sseTransports } from '../mcp.js';
+import { parseAddressVerificationGuardrail } from '../tools/address-verification-guardrail.js';
+import {
+  coerceDeliveryStatusReasonerInput,
+  runDeliveryStatusReasoner,
+} from '../tools/delivery-status-reasoner.js';
 import { normalizeVnr } from '../tools/normalize-vnr.js';
+import {
+  coercePostCallAlertDetectorInput,
+  runPostCallAlertDetector,
+} from '../tools/post-call-alert-detector.js';
+import {
+  coercePostCallEmailNotifierInput,
+  runPostCallEmailNotifier,
+} from '../tools/post-call-email-notifier.js';
+import {
+  coerceVerificationBrainInput,
+  runVerificationBrain,
+} from '../tools/verification-brain.js';
 import { logCall } from '../db.js';
 
 export const mcpRouter = Router();
@@ -42,6 +60,156 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: 'pmb_normalize_vnr',
+    description:
+      'Alias for normalize_vnr. Normalize messy spoken German VNR / insurance number text into a clean candidate.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: {
+          type: 'string',
+          description:
+            'German spoken VNR text, e.g. "L wie Ludwig null drei neun drei fünf neun neun zwei drei"',
+        },
+      },
+      required: ['text'],
+    },
+  },
+  {
+    name: 'pmb_address_verification_guardrail',
+    description:
+      'Parse and preserve PLZ, house number, and birthday from address-verification fallback turns. ' +
+      'This tool does not look up or authenticate a customer. It only structures values and says what Marie should ask next.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        raw_text: {
+          type: 'string',
+          description: 'Latest customer utterance or transcript chunk to parse.',
+        },
+        known_plz: {
+          type: 'string',
+          description: 'Previously collected 5-digit German PLZ, if already known.',
+        },
+        known_house_number: {
+          type: 'string',
+          description: 'Previously collected house number, if already known.',
+        },
+        known_birthday: {
+          type: 'string',
+          description: 'Previously collected birthday in YYYY-MM-DD format, if already known.',
+        },
+        attempt: {
+          type: 'number',
+          description: 'Current address verification attempt number, usually 1 or 2.',
+        },
+      },
+      required: ['raw_text', 'attempt'],
+    },
+  },
+  {
+    name: 'pmb_verification_brain',
+    description:
+      'Deterministic verification decision engine for phone, address, and VNR identification paths.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        phone_lookup_found: { type: 'boolean' },
+        identified: { type: 'boolean' },
+        authenticated: { type: 'boolean' },
+        lookup_path: { type: 'string' },
+        plz: { type: 'string' },
+        house_number: { type: 'string' },
+        birthday_customer: { type: 'string' },
+        vnr_raw: { type: 'string' },
+        vnr_confirmed: { type: 'boolean' },
+        vnr_candidate: { type: 'string' },
+        vnr_valid_shape: { type: 'boolean' },
+        get_customer_by_plz_geb_result: { type: 'string' },
+        get_customer_by_insurance_number_result: { type: 'string' },
+        check_birthday_result: { type: 'string' },
+        check_birthday_error: { type: 'string' },
+        birthday_system_available: { type: 'boolean' },
+        attempt_counts: { type: 'object' },
+        customer_requested_human: { type: 'boolean' },
+        office_hours: { type: 'boolean' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'pmb_delivery_status_reasoner',
+    description:
+      'Deterministic delivery-status reasoner for Pflegebox answers based on status, approval, and shipment history.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        status: { type: 'string' },
+        box_genehmigt: { type: 'string' },
+        letzte_box: { type: 'array' },
+        gen_pg54_ab: { type: 'string' },
+        gen_pg51_ab: { type: 'string' },
+        requested_month: { type: 'string' },
+        now: { type: 'string' },
+        vip: { type: 'boolean' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'pmb_post_call_alert_detector',
+    description:
+      'Post-call QA and alert detector for failed verification loops, frustration, dropped calls, and birthday_system issues.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        call_id: { type: 'string' },
+        duration_seconds: { type: 'number' },
+        call_status: { type: 'string' },
+        authenticated: { type: 'boolean' },
+        verification_successful: { type: 'boolean' },
+        transcript_text: { type: 'string' },
+        function_calls: { type: 'array' },
+        transitions: { type: 'array' },
+        detected_events: { type: 'object' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'pmb_post_call_email_notifier',
+    description:
+      'Runs post-call alert detection, formats a human-readable email, and sends it through Resend when an alert is required.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        call_id: { type: 'string' },
+        call_date: { type: 'string' },
+        duration_seconds: { type: 'number' },
+        call_status: { type: 'string' },
+        authenticated: { type: 'boolean' },
+        verification_successful: { type: 'boolean' },
+        transcript_text: { type: 'string' },
+        function_calls: { type: 'array' },
+        transitions: { type: 'array' },
+        detected_events: { type: 'object' },
+        to_email: { type: 'string' },
+        dry_run: { type: 'boolean' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'pmb_health_check',
+    description:
+      'Alias for health_check. Returns service health status. Use to verify the MCP server is reachable from Leaping.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
     name: 'health_check',
     description:
       'Returns service health status. Use to verify the MCP server is reachable from Leaping.',
@@ -59,6 +227,12 @@ async function runTool(
   args: Record<string, unknown>
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
   const start = Date.now();
+  const nullableString = (value: unknown): string | null => {
+    if (value === null || value === undefined) return null;
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    return trimmed ? trimmed : null;
+  };
 
   switch (name) {
     case 'normalize_vnr': {
@@ -68,6 +242,80 @@ async function runTool(
       const result = normalizeVnr(text);
       logCall('normalize_vnr', { text }, result, null, Date.now() - start);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+
+    case 'pmb_normalize_vnr': {
+      const text = args.text;
+      if (typeof text !== 'string' || !text.trim())
+        throw new Error('"text" (non-empty string) is required');
+      const result = normalizeVnr(text);
+      logCall('pmb_normalize_vnr', { text }, result, null, Date.now() - start);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+
+    case 'pmb_address_verification_guardrail': {
+      const raw_text = args.raw_text;
+      if (typeof raw_text !== 'string' || !raw_text.trim()) {
+        throw new Error('"raw_text" (non-empty string) is required');
+      }
+
+      const attempt = Number(args.attempt ?? 1);
+      if (!Number.isFinite(attempt) || attempt < 1) {
+        throw new Error('"attempt" must be a number >= 1');
+      }
+
+      const input = {
+        raw_text,
+        known_plz: nullableString(args.known_plz),
+        known_house_number: nullableString(args.known_house_number),
+        known_birthday: nullableString(args.known_birthday),
+        attempt,
+      };
+      const result = parseAddressVerificationGuardrail(input);
+      logCall('pmb_address_verification_guardrail', input, result, null, Date.now() - start);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+
+    case 'pmb_verification_brain': {
+      const input = coerceVerificationBrainInput(args);
+      const result = runVerificationBrain(input);
+      logCall('pmb_verification_brain', input, result, null, Date.now() - start);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+
+    case 'pmb_delivery_status_reasoner': {
+      const input = coerceDeliveryStatusReasonerInput(args);
+      const result = runDeliveryStatusReasoner(input);
+      logCall('pmb_delivery_status_reasoner', input, result, null, Date.now() - start);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+
+    case 'pmb_post_call_alert_detector': {
+      const input = coercePostCallAlertDetectorInput(args);
+      const result = runPostCallAlertDetector(input);
+      logCall('pmb_post_call_alert_detector', input, result, null, Date.now() - start);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+
+    case 'pmb_post_call_email_notifier': {
+      const input = coercePostCallEmailNotifierInput(args);
+      const result = await runPostCallEmailNotifier(input, {
+        provider: appConfig.ALERT_EMAIL_PROVIDER,
+        apiKey: appConfig.RESEND_API_KEY,
+        from: appConfig.ALERT_EMAIL_FROM,
+        defaultTo: appConfig.ALERT_EMAIL_TO,
+        subjectPrefix: appConfig.ALERT_EMAIL_SUBJECT_PREFIX,
+        gmailUser: appConfig.GMAIL_SMTP_USER,
+        gmailAppPassword: appConfig.GMAIL_SMTP_APP_PASSWORD,
+      });
+      logCall('pmb_post_call_email_notifier', input, result, null, Date.now() - start);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+
+    case 'pmb_health_check': {
+      const result = { ok: true, service: 'pflegemittelbox-mcp', version: '0.1.0' };
+      logCall('pmb_health_check', {}, result, null, Date.now() - start);
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
     }
 
     case 'health_check': {
