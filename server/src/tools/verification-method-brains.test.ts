@@ -16,6 +16,28 @@ test('phone path asks birthday', () => {
   assert.deepEqual(result.missing_fields, ['birthday_customer']);
 });
 
+test('phone path stores birthday and handles missing year across session calls', () => {
+  const first = runVerificationPhoneBrain({
+    session_id: 'phone-session-missing-year',
+    phone_lookup_found: true,
+    latest_customer_input: '16. März',
+  });
+
+  assert.equal(first.next_action, 'ASK_BIRTH_YEAR');
+  assert.equal(first.session_id, 'phone-session-missing-year');
+  assert.equal(first.stored_values?.birthday_customer, null);
+
+  const second = runVerificationPhoneBrain({
+    session_id: 'phone-session-missing-year',
+    latest_customer_input: 'neunzehnhundertsechsundfünfzig',
+    phone_lookup_found: true,
+    birthday_system_available: true,
+  });
+
+  assert.equal(second.next_action, 'CALL_CHECK_BIRTHDAY');
+  assert.equal(second.stored_values?.birthday_customer, '1956-03-16');
+});
+
 test('phone path calls check birthday only when safe', () => {
   const result = runVerificationPhoneBrain({
     phone_lookup_found: true,
@@ -135,6 +157,56 @@ test('address path reuses previous values when customer just confirms', () => {
   assert.equal(result.next_action, 'CALL_GET_CUSTOMER_BY_PLZ_GEB');
 });
 
+test('address path stores PLZ, house number, and birthday across session calls', () => {
+  const sessionId = 'address-session-stepwise';
+
+  const first = runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'Meine Postleitzahl ist 41372',
+    phone_lookup_found: false,
+  });
+  assert.equal(first.next_action, 'ASK_HOUSE_NUMBER');
+  assert.equal(first.stored_values?.plz, '41372');
+
+  const second = runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'Hausnummer 100',
+  });
+  assert.equal(second.next_action, 'ASK_BIRTHDAY');
+  assert.equal(second.stored_values?.plz, '41372');
+  assert.equal(second.stored_values?.house_number, '100');
+
+  const third = runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: '16.03.1956',
+  });
+  assert.equal(third.next_action, 'CALL_GET_CUSTOMER_BY_PLZ_GEB');
+  assert.equal(third.function_to_call, 'get_customer_by_plz_geb');
+  assert.equal(third.stored_values?.plz, '41372');
+  assert.equal(third.stored_values?.house_number, '100');
+  assert.equal(third.stored_values?.birthday_customer, '1956-03-16');
+});
+
+test('address lookup not_found is stored and yes confirmation allows retry lookup', () => {
+  const sessionId = 'address-session-retry';
+
+  const first = runVerificationAddressBrain({
+    session_id: sessionId,
+    plz: '41372',
+    house_number: '100',
+    birthday_customer: '1956-03-16',
+    get_customer_by_plz_geb_result: 'not_found',
+  });
+  assert.equal(first.next_action, 'CONFIRM_ADDRESS_VALUES');
+
+  const second = runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'ja stimmt',
+  });
+  assert.equal(second.next_action, 'CALL_GET_CUSTOMER_BY_PLZ_GEB');
+  assert.equal(second.function_to_call, 'get_customer_by_plz_geb');
+});
+
 test('VNR path confirms VNR before format check', () => {
   const result = runVerificationVnrBrain({
     vnr_candidate: 'L039359923',
@@ -192,6 +264,35 @@ test('VNR path treats yes-like reply as confirmation of previous VNR', () => {
   });
 
   assert.equal(result.next_action, 'CALL_CHECK_INSURANCE_NUMBER_FORMAT');
+});
+
+test('VNR path stores candidate and accepts yes confirmation in later call', () => {
+  const sessionId = 'vnr-session-confirm';
+
+  const first = runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'L wie Ludwig null drei neun drei fünf neun neun zwei drei',
+  });
+  assert.equal(first.next_action, 'CONFIRM_VNR');
+  assert.equal(first.stored_values?.vnr_candidate, 'L039359923');
+
+  const second = runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'ja',
+  });
+  assert.equal(second.next_action, 'CALL_CHECK_INSURANCE_NUMBER_FORMAT');
+  assert.equal(second.stored_values?.vnr_confirmed, true);
+});
+
+test('stateless behavior still works without session_id', () => {
+  const result = runVerificationAddressBrain({
+    plz: '22765',
+    house_number: '14',
+    birthday_customer: '1948-05-03',
+  });
+
+  assert.equal(result.next_action, 'CALL_GET_CUSTOMER_BY_PLZ_GEB');
+  assert.equal(result.session_id, undefined);
 });
 
 test('VNR path calls birthday check only after customer lookup found', () => {

@@ -111,6 +111,13 @@ For Marie clone testing, the verification flow can use three narrow MCP brains a
 
 The clone should ask the MCP what to do next and follow `next_action` exactly.
 
+Recommended integration pattern:
+
+- On the first verification MCP call, always pass `phone_lookup_found` from the real `get_customer_by_phone` result.
+- Pass `latest_customer_input` only as the customer's answer to the current verification question.
+- Do not pass the customer's Anliegen, requested month, or general request text as `latest_customer_input`.
+- If available, pass a stable `session_id` / call ID so the verification brains can reuse stored PLZ, house number, birthday, VNR, and function results across turns.
+
 Important: the MCP only reduces wrong-order decisions if it is used as a gatekeeper. If all native Leaping functions stay enabled in one large stage, Marie can still call functions in the wrong order. The safer setup is to restrict enabled native functions per clone stage so the clone can only execute the function that the MCP brain explicitly allows.
 
 ## Local development

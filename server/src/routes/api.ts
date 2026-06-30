@@ -134,6 +134,7 @@ const TOOL_DEFS = [
     inputSchema: {
       type: 'object',
       properties: {
+        session_id: { type: 'string' },
         phone_lookup_found: { type: 'boolean' },
         latest_customer_input: { type: 'string' },
         birthday_customer: { type: 'string' },
@@ -157,6 +158,7 @@ const TOOL_DEFS = [
     inputSchema: {
       type: 'object',
       properties: {
+        session_id: { type: 'string' },
         phone_lookup_found: { type: 'boolean' },
         latest_customer_input: { type: 'string' },
         plz: { type: 'string' },
@@ -179,6 +181,7 @@ const TOOL_DEFS = [
     inputSchema: {
       type: 'object',
       properties: {
+        session_id: { type: 'string' },
         latest_customer_input: { type: 'string' },
         vnr_raw: { type: 'string' },
         vnr_candidate: { type: 'string' },

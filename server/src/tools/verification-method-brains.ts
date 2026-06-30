@@ -1,6 +1,7 @@
 import { normalizeVnr as normalizeVnrLoose } from './normalize-vnr.js';
 
 export interface VerificationPhoneBrainInput {
+  session_id?: string;
   phone_lookup_found?: boolean;
   latest_customer_input?: string;
   birthday_customer?: string;
@@ -14,6 +15,7 @@ export interface VerificationPhoneBrainInput {
 }
 
 export interface VerificationAddressBrainInput {
+  session_id?: string;
   phone_lookup_found?: boolean;
   latest_customer_input?: string;
   plz?: string;
@@ -26,6 +28,7 @@ export interface VerificationAddressBrainInput {
 }
 
 export interface VerificationVnrBrainInput {
+  session_id?: string;
   latest_customer_input?: string;
   vnr_raw?: string;
   vnr_candidate?: string;
@@ -56,6 +59,41 @@ export interface VerificationMethodBrainResult {
   reason: string;
   missing_fields: string[];
   safety_flags: string[];
+  session_id?: string;
+  state_summary?: string;
+  attempts?: VerificationSessionAttempts;
+  stored_values?: VerificationSessionStoredValues;
+}
+
+export interface VerificationSessionAttempts {
+  plz_attempts: number;
+  house_number_attempts: number;
+  birthday_collection_attempts: number;
+  address_lookup_attempts: number;
+  vnr_request_attempts: number;
+  vnr_lookup_attempts: number;
+  birthday_check_attempts: number;
+}
+
+export interface VerificationSessionStoredValues {
+  active_verification_path: 'phone' | 'address' | 'vnr' | null;
+  phone_lookup_found: boolean | null;
+  plz: string | null;
+  house_number: string | null;
+  birthday_customer: string | null;
+  vnr_candidate: string | null;
+  vnr_confirmed: boolean | null;
+  check_birthday_result: string | null;
+  check_birthday_error: string | null;
+  get_customer_by_plz_geb_result: string | null;
+  get_customer_by_insurance_number_result: string | null;
+  check_insurance_number_format_result: string | null;
+}
+
+interface VerificationSessionState extends VerificationSessionStoredValues {
+  pending_birthday_day: number | null;
+  pending_birthday_month: number | null;
+  attempts: VerificationSessionAttempts;
 }
 
 type Confidence = 'high' | 'medium' | 'low';
@@ -65,6 +103,9 @@ interface BirthdayParseResult {
   status: BirthdayStatus;
   iso: string | null;
   reason?: string;
+  day?: number;
+  month?: number;
+  year?: number;
 }
 
 interface Token {
@@ -168,6 +209,68 @@ const MONTH_WORDS: Record<string, number> = {
 
 const HOUSE_NUMBER_SUFFIX_WORDS = new Set(['a', 'b', 'c', 'd', 'alpha', 'beta']);
 const YES_WORDS = ['ja', 'jawohl', 'stimmt', 'genau', 'korrekt', 'richtig', 'das stimmt'];
+const verificationSessions = new Map<string, VerificationSessionState>();
+
+function emptyAttempts(): VerificationSessionAttempts {
+  return {
+    plz_attempts: 0,
+    house_number_attempts: 0,
+    birthday_collection_attempts: 0,
+    address_lookup_attempts: 0,
+    vnr_request_attempts: 0,
+    vnr_lookup_attempts: 0,
+    birthday_check_attempts: 0,
+  };
+}
+
+function emptySessionState(): VerificationSessionState {
+  return {
+    active_verification_path: null,
+    phone_lookup_found: null,
+    plz: null,
+    house_number: null,
+    birthday_customer: null,
+    vnr_candidate: null,
+    vnr_confirmed: null,
+    check_birthday_result: null,
+    check_birthday_error: null,
+    get_customer_by_plz_geb_result: null,
+    get_customer_by_insurance_number_result: null,
+    check_insurance_number_format_result: null,
+    pending_birthday_day: null,
+    pending_birthday_month: null,
+    attempts: emptyAttempts(),
+  };
+}
+
+function getSessionState(sessionId: string | undefined): VerificationSessionState | null {
+  if (!sessionId) return null;
+  const existing = verificationSessions.get(sessionId);
+  if (existing) return structuredClone(existing);
+  const created = emptySessionState();
+  verificationSessions.set(sessionId, created);
+  return structuredClone(created);
+}
+
+function saveSessionState(sessionId: string | undefined, state: VerificationSessionState) {
+  if (!sessionId) return;
+  verificationSessions.set(sessionId, structuredClone(state));
+}
+
+function toNullableString(value: string | undefined): string | null {
+  return value ?? null;
+}
+
+function stateSummary(state: VerificationSessionState): string {
+  return [
+    `path=${state.active_verification_path ?? 'unknown'}`,
+    `phone_lookup_found=${state.phone_lookup_found === null ? 'unknown' : String(state.phone_lookup_found)}`,
+    `plz=${state.plz ?? 'missing'}`,
+    `house_number=${state.house_number ?? 'missing'}`,
+    `birthday=${state.birthday_customer ?? 'missing'}`,
+    `vnr=${state.vnr_candidate ?? 'missing'}`,
+  ].join(' | ');
+}
 
 function asString(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
@@ -347,12 +450,12 @@ function parseBirthday(rawText: string | undefined): BirthdayParseResult {
     const day = Number(numericMatch[1]);
     const month = Number(numericMatch[2]);
     if (!numericMatch[3]) {
-      return { status: 'incomplete_year', iso: null, reason: 'Day and month were provided but year is missing.' };
+      return { status: 'incomplete_year', iso: null, reason: 'Day and month were provided but year is missing.', day, month };
     }
     const year = Number(numericMatch[3]);
     const iso = toIsoDate(day, month, year);
     return iso
-      ? { status: 'complete', iso }
+      ? { status: 'complete', iso, day, month, year }
       : { status: 'impossible', iso: null, reason: 'Birthday looked numeric but was impossible or in the future.' };
   }
 
@@ -364,12 +467,18 @@ function parseBirthday(rawText: string | undefined): BirthdayParseResult {
     if (dayValue === null) continue;
     const { year, used } = parseGermanYearTokens(tokens, i + 1);
     if (year === null || used === 0) {
-      return { status: 'incomplete_year', iso: null, reason: 'Day and month were provided but year is missing.' };
+      return { status: 'incomplete_year', iso: null, reason: 'Day and month were provided but year is missing.', day: dayValue, month: monthValue };
     }
     const iso = toIsoDate(dayValue, monthValue, year);
     return iso
-      ? { status: 'complete', iso }
+      ? { status: 'complete', iso, day: dayValue, month: monthValue, year }
       : { status: 'impossible', iso: null, reason: 'Birthday was impossible or in the future.' };
+  }
+
+  const tokensOnlyYear = tokenize(rawText);
+  const yearOnly = parseGermanYearTokens(tokensOnlyYear, 0);
+  if (yearOnly.year !== null && yearOnly.used === tokensOnlyYear.length) {
+    return { status: 'missing', iso: null, year: yearOnly.year };
   }
 
   return { status: 'missing', iso: null };
@@ -454,6 +563,7 @@ function parseHouseNumber(rawText: string | undefined): string | undefined {
     const parsed = parseNumberFromTokenWindow(tokens, start);
     if (!parsed.value) return undefined;
     if (explicitCue) return parsed.value;
+    if (parsed.value.length === 5) return undefined;
     const trailing = tokens.slice(start + parsed.used);
     if (trailing.some((token) => !isHouseNumberSuffixToken(token))) return undefined;
     return parsed.value;
@@ -470,9 +580,30 @@ function parseHouseNumber(rawText: string | undefined): string | undefined {
   return undefined;
 }
 
-function mergeBirthday(existing: string | undefined, latestText: string | undefined) {
-  if (!latestText) return { value: existing, parse: existing ? { status: 'complete', iso: existing } as BirthdayParseResult : { status: 'missing', iso: null } as BirthdayParseResult };
+function mergeBirthday(
+  existing: string | undefined,
+  latestText: string | undefined,
+  pendingDay?: number | null,
+  pendingMonth?: number | null
+) {
+  if (!latestText) {
+    return {
+      value: existing,
+      parse: existing
+        ? ({ status: 'complete', iso: existing } as BirthdayParseResult)
+        : ({ status: 'missing', iso: null } as BirthdayParseResult),
+    };
+  }
   const parsed = parseBirthday(latestText);
+  if (!existing && parsed.year !== undefined && pendingDay && pendingMonth) {
+    const iso = toIsoDate(pendingDay, pendingMonth, parsed.year);
+    if (iso) {
+      return {
+        value: iso,
+        parse: { status: 'complete', iso, day: pendingDay, month: pendingMonth, year: parsed.year } as BirthdayParseResult,
+      };
+    }
+  }
   return {
     value: parsed.status === 'complete' ? parsed.iso ?? existing : existing,
     parse: parsed,
@@ -500,6 +631,39 @@ function makeResult(
     reason: patch.reason,
     missing_fields: patch.missing_fields,
     safety_flags: patch.safety_flags,
+    session_id: patch.session_id,
+    state_summary: patch.state_summary,
+    attempts: patch.attempts,
+    stored_values: patch.stored_values,
+  };
+}
+
+function attachSessionDebug(
+  result: VerificationMethodBrainResult,
+  sessionId: string | undefined,
+  state: VerificationSessionState | null
+): VerificationMethodBrainResult {
+  if (!sessionId || !state) return result;
+  saveSessionState(sessionId, state);
+  return {
+    ...result,
+    session_id: sessionId,
+    state_summary: stateSummary(state),
+    attempts: structuredClone(state.attempts),
+    stored_values: {
+      active_verification_path: state.active_verification_path,
+      phone_lookup_found: state.phone_lookup_found,
+      plz: state.plz,
+      house_number: state.house_number,
+      birthday_customer: state.birthday_customer,
+      vnr_candidate: state.vnr_candidate,
+      vnr_confirmed: state.vnr_confirmed,
+      check_birthday_result: state.check_birthday_result,
+      check_birthday_error: state.check_birthday_error,
+      get_customer_by_plz_geb_result: state.get_customer_by_plz_geb_result,
+      get_customer_by_insurance_number_result: state.get_customer_by_insurance_number_result,
+      check_insurance_number_format_result: state.check_insurance_number_format_result,
+    },
   };
 }
 
@@ -517,6 +681,7 @@ function maybeTransferHuman(method: 'phone' | 'address' | 'vnr', requested?: boo
 
 export function coerceVerificationPhoneBrainInput(input: Record<string, unknown>): VerificationPhoneBrainInput {
   return {
+    session_id: asString(input.session_id),
     phone_lookup_found: asBoolean(input.phone_lookup_found),
     latest_customer_input: asString(input.latest_customer_input),
     birthday_customer: asString(input.birthday_customer),
@@ -538,6 +703,7 @@ export function coerceVerificationPhoneBrainInput(input: Record<string, unknown>
 
 export function coerceVerificationAddressBrainInput(input: Record<string, unknown>): VerificationAddressBrainInput {
   return {
+    session_id: asString(input.session_id),
     phone_lookup_found: asBoolean(input.phone_lookup_found),
     latest_customer_input: asString(input.latest_customer_input),
     plz: asString(input.plz),
@@ -558,6 +724,7 @@ export function coerceVerificationAddressBrainInput(input: Record<string, unknow
 
 export function coerceVerificationVnrBrainInput(input: Record<string, unknown>): VerificationVnrBrainInput {
   return {
+    session_id: asString(input.session_id),
     latest_customer_input: asString(input.latest_customer_input),
     vnr_raw: normalizeVnr(asString(input.vnr_raw)),
     vnr_candidate: normalizeVnr(asString(input.vnr_candidate)),
@@ -596,42 +763,83 @@ export function coerceVerificationVnrBrainInput(input: Record<string, unknown>):
 }
 
 export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput): VerificationMethodBrainResult {
-  const birthdayMerge = mergeBirthday(rawInput.birthday_customer, rawInput.latest_customer_input);
+  const session = getSessionState(rawInput.session_id);
+  if (session) {
+    session.active_verification_path = 'phone';
+    if (rawInput.phone_lookup_found !== undefined) session.phone_lookup_found = rawInput.phone_lookup_found;
+  }
+
+  const latestText = rawInput.latest_customer_input;
+  const birthdayMerge = mergeBirthday(
+    rawInput.birthday_customer ?? session?.birthday_customer ?? undefined,
+    latestText,
+    session?.pending_birthday_day,
+    session?.pending_birthday_month
+  );
   const input: VerificationPhoneBrainInput = {
     ...rawInput,
+    phone_lookup_found: rawInput.phone_lookup_found ?? session?.phone_lookup_found ?? undefined,
     birthday_customer: birthdayMerge.value,
-    check_birthday_result: rawInput.check_birthday_result ?? 'not_called',
-    birthday_request_count: rawInput.birthday_request_count ?? 0,
-    birthday_check_attempts: rawInput.birthday_check_attempts ?? 0,
+    check_birthday_result:
+      rawInput.check_birthday_result ??
+      (session?.check_birthday_result as VerificationPhoneBrainInput['check_birthday_result'] | null) ??
+      'not_called',
+    check_birthday_error: rawInput.check_birthday_error ?? session?.check_birthday_error ?? undefined,
+    birthday_system_available: rawInput.birthday_system_available ?? undefined,
+    birthday_request_count: rawInput.birthday_request_count ?? session?.attempts.birthday_collection_attempts ?? 0,
+    birthday_check_attempts: rawInput.birthday_check_attempts ?? session?.attempts.birthday_check_attempts ?? 0,
   };
 
+  if (session) {
+    session.phone_lookup_found = input.phone_lookup_found ?? session.phone_lookup_found;
+    if (birthdayMerge.value) session.birthday_customer = birthdayMerge.value;
+    if (birthdayMerge.parse.status === 'complete') {
+      session.pending_birthday_day = null;
+      session.pending_birthday_month = null;
+    } else if (birthdayMerge.parse.status === 'incomplete_year') {
+      session.pending_birthday_day = birthdayMerge.parse.day ?? null;
+      session.pending_birthday_month = birthdayMerge.parse.month ?? null;
+    }
+    if (rawInput.check_birthday_result) session.check_birthday_result = rawInput.check_birthday_result;
+    if (rawInput.check_birthday_error) session.check_birthday_error = rawInput.check_birthday_error;
+    if (rawInput.latest_customer_input && !birthdayMerge.value) {
+      session.attempts.birthday_collection_attempts += 1;
+    }
+    if (rawInput.check_birthday_result && rawInput.check_birthday_result !== 'not_called') {
+      session.attempts.birthday_check_attempts += 1;
+    }
+  }
+
   const transfer = maybeTransferHuman('phone', input.customer_requested_human, input.office_hours);
-  if (transfer) return transfer;
+  if (transfer) {
+    saveSessionState(rawInput.session_id, session ?? emptySessionState());
+    return attachSessionDebug(transfer, rawInput.session_id, session);
+  }
 
   if (input.phone_lookup_found !== true) {
-    return makeResult('phone', {
+    return attachSessionDebug(makeResult('phone', {
       ok: false,
       next_action: 'WRONG_METHOD',
       say: '',
       reason: 'Phone verification brain can only be used after get_customer_by_phone found a customer.',
       missing_fields: [],
       safety_flags: ['wrong_method_phone_lookup_not_found'],
-    });
+    }), rawInput.session_id, session);
   }
 
   if (isMissingBirthdaySystem(input.check_birthday_error)) {
-    return makeResult('phone', {
+    return attachSessionDebug(makeResult('phone', {
       ok: false,
       next_action: 'TECHNICAL_ESCALATION',
       say: 'Es gibt gerade ein technisches Problem bei der Verifizierung. Ich gebe das intern weiter.',
       reason: 'Birthday verification cannot run because birthday_system is missing.',
       missing_fields: ['birthday_system'],
       safety_flags: ['missing_birthday_system', 'block_birthday_loop'],
-    });
+    }), rawInput.session_id, session);
   }
 
   if (birthdayMerge.parse.status === 'incomplete_year') {
-    return makeResult('phone', {
+    const result = makeResult('phone', {
       ok: true,
       next_action: 'ASK_BIRTH_YEAR',
       say: 'Bitte nennen Sie mir noch das Geburtsjahr vollständig.',
@@ -639,22 +847,24 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
       missing_fields: ['birth_year'],
       safety_flags: [],
     });
+    saveSessionState(rawInput.session_id, session ?? emptySessionState());
+    return attachSessionDebug(result, rawInput.session_id, session);
   }
 
   if (birthdayMerge.parse.status === 'impossible') {
-    return makeResult('phone', {
+    return attachSessionDebug(makeResult('phone', {
       ok: false,
       next_action: 'ASK_BIRTHDAY',
       say: 'Das Geburtsdatum konnte ich so nicht verarbeiten. Bitte nennen Sie es noch einmal vollständig.',
       reason: birthdayMerge.parse.reason ?? 'Birthday was impossible or ambiguous.',
       missing_fields: ['birthday_customer'],
       safety_flags: ['birthday_invalid'],
-    });
+    }), rawInput.session_id, session);
   }
 
   if (!input.birthday_customer) {
     if ((input.birthday_request_count ?? 0) >= 2) {
-      return makeResult('phone', {
+      return attachSessionDebug(makeResult('phone', {
         ok: false,
         next_action: 'TRANSITION_NICHT_IDENTIFIZIERT',
         say: 'Ich konnte Sie leider nicht eindeutig verifizieren.',
@@ -662,10 +872,10 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
         missing_fields: ['birthday_customer'],
         safety_flags: ['birthday_request_limit_reached'],
         transition_to: 'nicht_identifiziert',
-      });
+      }), rawInput.session_id, session);
     }
 
-    return makeResult('phone', {
+    const result = makeResult('phone', {
       ok: true,
       next_action: 'ASK_BIRTHDAY',
       say:
@@ -676,10 +886,12 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
       missing_fields: ['birthday_customer'],
       safety_flags: [],
     });
+    saveSessionState(rawInput.session_id, session ?? emptySessionState());
+    return attachSessionDebug(result, rawInput.session_id, session);
   }
 
   if (input.check_birthday_result === 'success') {
-    return makeResult('phone', {
+    return attachSessionDebug(makeResult('phone', {
       ok: true,
       next_action: 'TRANSITION_WEITER',
       say: 'Danke, die Verifizierung ist abgeschlossen.',
@@ -687,12 +899,12 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
       missing_fields: [],
       safety_flags: [],
       transition_to: 'weiter',
-    });
+    }), rawInput.session_id, session);
   }
 
   if (input.check_birthday_result === 'failed') {
     if ((input.birthday_check_attempts ?? 0) >= 2 || (input.birthday_request_count ?? 0) >= 2) {
-      return makeResult('phone', {
+      return attachSessionDebug(makeResult('phone', {
         ok: false,
         next_action: 'TRANSITION_NICHT_IDENTIFIZIERT',
         say: 'Ich konnte Sie leider nicht eindeutig verifizieren.',
@@ -700,10 +912,10 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
         missing_fields: [],
         safety_flags: ['birthday_check_limit_reached'],
         transition_to: 'nicht_identifiziert',
-      });
+      }), rawInput.session_id, session);
     }
 
-    return makeResult('phone', {
+    const result = makeResult('phone', {
       ok: true,
       next_action: 'ASK_BIRTHDAY',
       say: 'Bitte nennen Sie mir Ihr Geburtsdatum noch einmal zur Verifizierung.',
@@ -711,20 +923,21 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
       missing_fields: ['birthday_customer'],
       safety_flags: ['birthday_retry'],
     });
+    saveSessionState(rawInput.session_id, session ?? emptySessionState());
+    return attachSessionDebug(result, rawInput.session_id, session);
   }
 
   if (input.birthday_system_available === false) {
-    return makeResult('phone', {
+    return attachSessionDebug(makeResult('phone', {
       ok: false,
       next_action: 'TECHNICAL_ESCALATION',
       say: 'Es gibt gerade ein technisches Problem bei der Verifizierung. Ich gebe das intern weiter.',
       reason: 'Birthday system is unavailable, so check_birthday is not safe to call.',
       missing_fields: ['birthday_system'],
       safety_flags: ['missing_birthday_system', 'block_birthday_loop'],
-    });
+    }), rawInput.session_id, session);
   }
-
-  return makeResult('phone', {
+  const result = makeResult('phone', {
     ok: true,
     next_action: 'CALL_CHECK_BIRTHDAY',
     say: '',
@@ -733,25 +946,69 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
     safety_flags: [],
     function_to_call: 'check_birthday',
   });
+  saveSessionState(rawInput.session_id, session ?? emptySessionState());
+  return attachSessionDebug(result, rawInput.session_id, session);
 }
 
 export function runVerificationAddressBrain(rawInput: VerificationAddressBrainInput): VerificationMethodBrainResult {
+  const session = getSessionState(rawInput.session_id);
+  if (session) {
+    session.active_verification_path = 'address';
+    if (rawInput.phone_lookup_found !== undefined) session.phone_lookup_found = rawInput.phone_lookup_found;
+  }
   const latestText = rawInput.latest_customer_input;
-  const birthdayMerge = mergeBirthday(rawInput.birthday_customer, latestText);
+  const birthdayMerge = mergeBirthday(
+    rawInput.birthday_customer ?? session?.birthday_customer ?? undefined,
+    latestText,
+    session?.pending_birthday_day,
+    session?.pending_birthday_month
+  );
   const input: VerificationAddressBrainInput = {
     ...rawInput,
-    plz: rawInput.plz ?? parsePlz(latestText),
-    house_number: rawInput.house_number ?? parseHouseNumber(latestText),
+    phone_lookup_found: rawInput.phone_lookup_found ?? session?.phone_lookup_found ?? undefined,
+    plz: rawInput.plz ?? session?.plz ?? parsePlz(latestText),
+    house_number: rawInput.house_number ?? session?.house_number ?? parseHouseNumber(latestText),
     birthday_customer: birthdayMerge.value,
-    get_customer_by_plz_geb_result: rawInput.get_customer_by_plz_geb_result ?? 'not_called',
-    address_lookup_attempts: rawInput.address_lookup_attempts ?? 0,
+    get_customer_by_plz_geb_result:
+      rawInput.get_customer_by_plz_geb_result ??
+      (session?.get_customer_by_plz_geb_result as VerificationAddressBrainInput['get_customer_by_plz_geb_result'] | null) ??
+      'not_called',
+    address_lookup_attempts: rawInput.address_lookup_attempts ?? session?.attempts.address_lookup_attempts ?? 0,
   };
 
+  if (session) {
+    session.phone_lookup_found = input.phone_lookup_found ?? session.phone_lookup_found;
+    if (input.plz) session.plz = input.plz;
+    else if (rawInput.latest_customer_input) session.attempts.plz_attempts += 1;
+    if (input.house_number) session.house_number = input.house_number;
+    else if (rawInput.latest_customer_input && input.plz) session.attempts.house_number_attempts += 1;
+    if (birthdayMerge.value) session.birthday_customer = birthdayMerge.value;
+    if (birthdayMerge.parse.status === 'complete') {
+      session.pending_birthday_day = null;
+      session.pending_birthday_month = null;
+    } else if (birthdayMerge.parse.status === 'incomplete_year') {
+      session.pending_birthday_day = birthdayMerge.parse.day ?? null;
+      session.pending_birthday_month = birthdayMerge.parse.month ?? null;
+    }
+    else if (rawInput.latest_customer_input && input.plz && input.house_number) {
+      session.attempts.birthday_collection_attempts += 1;
+    }
+    if (rawInput.get_customer_by_plz_geb_result) {
+      session.get_customer_by_plz_geb_result = rawInput.get_customer_by_plz_geb_result;
+      if (rawInput.get_customer_by_plz_geb_result !== 'not_called') {
+        session.attempts.address_lookup_attempts += 1;
+      }
+    }
+  }
+
   const transfer = maybeTransferHuman('address', input.customer_requested_human, input.office_hours);
-  if (transfer) return transfer;
+  if (transfer) {
+    saveSessionState(rawInput.session_id, session ?? emptySessionState());
+    return attachSessionDebug(transfer, rawInput.session_id, session);
+  }
 
   if (!input.plz) {
-    return makeResult('address', {
+    const result = makeResult('address', {
       ok: true,
       next_action: 'ASK_PLZ',
       say:
@@ -762,10 +1019,12 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
       missing_fields: ['plz'],
       safety_flags: [],
     });
+    saveSessionState(rawInput.session_id, session ?? emptySessionState());
+    return attachSessionDebug(result, rawInput.session_id, session);
   }
 
   if (!input.house_number) {
-    return makeResult('address', {
+    const result = makeResult('address', {
       ok: true,
       next_action: 'ASK_HOUSE_NUMBER',
       say:
@@ -776,10 +1035,12 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
       missing_fields: ['house_number'],
       safety_flags: [],
     });
+    saveSessionState(rawInput.session_id, session ?? emptySessionState());
+    return attachSessionDebug(result, rawInput.session_id, session);
   }
 
   if (birthdayMerge.parse.status === 'incomplete_year') {
-    return makeResult('address', {
+    const result = makeResult('address', {
       ok: true,
       next_action: 'ASK_BIRTH_YEAR',
       say: 'Bitte nennen Sie mir noch das Geburtsjahr vollständig.',
@@ -787,21 +1048,23 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
       missing_fields: ['birth_year'],
       safety_flags: ['never_call_check_birthday_in_address_path'],
     });
+    saveSessionState(rawInput.session_id, session ?? emptySessionState());
+    return attachSessionDebug(result, rawInput.session_id, session);
   }
 
   if (birthdayMerge.parse.status === 'impossible') {
-    return makeResult('address', {
+    return attachSessionDebug(makeResult('address', {
       ok: false,
       next_action: 'ASK_BIRTHDAY',
       say: 'Das Geburtsdatum konnte ich so nicht verarbeiten. Bitte nennen Sie es noch einmal vollständig.',
       reason: birthdayMerge.parse.reason ?? 'Birthday was impossible or ambiguous.',
       missing_fields: ['birthday_customer'],
       safety_flags: ['birthday_invalid', 'never_call_check_birthday_in_address_path'],
-    });
+    }), rawInput.session_id, session);
   }
 
   if (!input.birthday_customer) {
-    return makeResult('address', {
+    const result = makeResult('address', {
       ok: true,
       next_action: 'ASK_BIRTHDAY',
       say:
@@ -812,10 +1075,12 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
       missing_fields: ['birthday_customer'],
       safety_flags: ['never_call_check_birthday_in_address_path'],
     });
+    saveSessionState(rawInput.session_id, session ?? emptySessionState());
+    return attachSessionDebug(result, rawInput.session_id, session);
   }
 
   if (input.get_customer_by_plz_geb_result === 'found') {
-    return makeResult('address', {
+    return attachSessionDebug(makeResult('address', {
       ok: true,
       next_action: 'TRANSITION_WEITER',
       say: 'Danke, die Verifizierung ist abgeschlossen.',
@@ -823,23 +1088,23 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
       missing_fields: [],
       safety_flags: ['never_call_check_birthday_in_address_path'],
       transition_to: 'weiter',
-    });
+    }), rawInput.session_id, session);
   }
 
   if (input.get_customer_by_plz_geb_result === 'not_found') {
     if ((input.address_lookup_attempts ?? 0) >= 2) {
-      return makeResult('address', {
+      return attachSessionDebug(makeResult('address', {
         ok: false,
         next_action: 'FALLBACK_TO_VNR',
         say: 'Ich konnte Sie über diese Angaben nicht eindeutig finden. Bitte nennen Sie mir stattdessen Ihre Versicherungsnummer.',
         reason: 'Address lookup failed twice, so the next safe fallback is VNR verification.',
         missing_fields: [],
         safety_flags: ['fallback_to_vnr', 'never_call_check_birthday_in_address_path'],
-      });
+      }), rawInput.session_id, session);
     }
 
     if (isYesLike(latestText)) {
-      return makeResult('address', {
+      const result = makeResult('address', {
         ok: true,
         next_action: 'CALL_GET_CUSTOMER_BY_PLZ_GEB',
         say: '',
@@ -848,9 +1113,11 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
         safety_flags: ['address_retry', 'never_call_check_birthday_in_address_path'],
         function_to_call: 'get_customer_by_plz_geb',
       });
+      saveSessionState(rawInput.session_id, session ?? emptySessionState());
+      return attachSessionDebug(result, rawInput.session_id, session);
     }
 
-    return makeResult('address', {
+    const result = makeResult('address', {
       ok: true,
       next_action: 'CONFIRM_ADDRESS_VALUES',
       say: `Ich habe bisher Postleitzahl ${input.plz}, Hausnummer ${input.house_number} und Ihr Geburtsdatum verstanden. Bitte bestätigen oder korrigieren Sie diese Angaben kurz.`,
@@ -858,31 +1125,32 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
       missing_fields: [],
       safety_flags: ['address_retry', 'never_call_check_birthday_in_address_path'],
     });
+    saveSessionState(rawInput.session_id, session ?? emptySessionState());
+    return attachSessionDebug(result, rawInput.session_id, session);
   }
 
   if (input.get_customer_by_plz_geb_result === 'error') {
     if ((input.address_lookup_attempts ?? 0) >= 2) {
-      return makeResult('address', {
+      return attachSessionDebug(makeResult('address', {
         ok: false,
         next_action: 'FALLBACK_TO_VNR',
         say: 'Ich wechsle zur Verifizierung über Ihre Versicherungsnummer.',
         reason: 'Address lookup produced repeated errors, so the safe fallback is VNR verification.',
         missing_fields: [],
         safety_flags: ['address_lookup_error', 'fallback_to_vnr', 'never_call_check_birthday_in_address_path'],
-      });
+      }), rawInput.session_id, session);
     }
 
-    return makeResult('address', {
+    return attachSessionDebug(makeResult('address', {
       ok: false,
       next_action: 'TECHNICAL_ESCALATION',
       say: 'Es gibt gerade ein technisches Problem bei der Verifizierung. Ich gebe das intern weiter.',
       reason: 'Address lookup returned an error before a safe retry decision could be made.',
       missing_fields: [],
       safety_flags: ['address_lookup_error', 'never_call_check_birthday_in_address_path'],
-    });
+    }), rawInput.session_id, session);
   }
-
-  return makeResult('address', {
+  const result = makeResult('address', {
     ok: true,
     next_action: 'CALL_GET_CUSTOMER_BY_PLZ_GEB',
     say: '',
@@ -891,49 +1159,107 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
     safety_flags: ['never_call_check_birthday_in_address_path'],
     function_to_call: 'get_customer_by_plz_geb',
   });
+  saveSessionState(rawInput.session_id, session ?? emptySessionState());
+  return attachSessionDebug(result, rawInput.session_id, session);
 }
 
 export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): VerificationMethodBrainResult {
+  const session = getSessionState(rawInput.session_id);
+  if (session) {
+    session.active_verification_path = 'vnr';
+  }
   const latestText = rawInput.latest_customer_input;
   const latestCandidate = latestText ? normalizeVnrLoose(latestText).candidate : undefined;
-  const birthdayMerge = mergeBirthday(rawInput.birthday_customer, latestText);
+  const birthdayMerge = mergeBirthday(
+    rawInput.birthday_customer ?? session?.birthday_customer ?? undefined,
+    latestText,
+    session?.pending_birthday_day,
+    session?.pending_birthday_month
+  );
   const input: VerificationVnrBrainInput = {
     ...rawInput,
-    vnr_raw: normalizeVnr(rawInput.vnr_raw ?? latestCandidate),
-    vnr_candidate: normalizeVnr(rawInput.vnr_candidate ?? latestCandidate),
+    vnr_raw: normalizeVnr(rawInput.vnr_raw ?? session?.vnr_candidate ?? latestCandidate),
+    vnr_candidate: normalizeVnr(rawInput.vnr_candidate ?? session?.vnr_candidate ?? latestCandidate),
     vnr_confirmed:
       rawInput.vnr_confirmed === true ||
-      (rawInput.vnr_candidate !== undefined && isYesLike(latestText))
+      ((rawInput.vnr_candidate !== undefined || session?.vnr_candidate !== null) && isYesLike(latestText))
         ? true
-        : rawInput.vnr_confirmed,
+        : rawInput.vnr_confirmed ?? session?.vnr_confirmed ?? undefined,
     birthday_customer: birthdayMerge.value,
-    check_insurance_number_format_result: rawInput.check_insurance_number_format_result ?? 'not_called',
+    check_insurance_number_format_result:
+      rawInput.check_insurance_number_format_result ??
+      (session?.check_insurance_number_format_result as VerificationVnrBrainInput['check_insurance_number_format_result'] | null) ??
+      'not_called',
     get_customer_by_insurance_number_result:
-      rawInput.get_customer_by_insurance_number_result ?? 'not_called',
-    check_birthday_result: rawInput.check_birthday_result ?? 'not_called',
-    vnr_request_count: rawInput.vnr_request_count ?? 0,
-    vnr_lookup_attempts: rawInput.vnr_lookup_attempts ?? 0,
-    birthday_request_count: rawInput.birthday_request_count ?? 0,
-    birthday_check_attempts: rawInput.birthday_check_attempts ?? 0,
+      rawInput.get_customer_by_insurance_number_result ??
+      (session?.get_customer_by_insurance_number_result as VerificationVnrBrainInput['get_customer_by_insurance_number_result'] | null) ??
+      'not_called',
+    check_birthday_result:
+      rawInput.check_birthday_result ??
+      (session?.check_birthday_result as VerificationVnrBrainInput['check_birthday_result'] | null) ??
+      'not_called',
+    check_birthday_error: rawInput.check_birthday_error ?? session?.check_birthday_error ?? undefined,
+    vnr_request_count: rawInput.vnr_request_count ?? session?.attempts.vnr_request_attempts ?? 0,
+    vnr_lookup_attempts: rawInput.vnr_lookup_attempts ?? session?.attempts.vnr_lookup_attempts ?? 0,
+    birthday_request_count: rawInput.birthday_request_count ?? session?.attempts.birthday_collection_attempts ?? 0,
+    birthday_check_attempts: rawInput.birthday_check_attempts ?? session?.attempts.birthday_check_attempts ?? 0,
   };
 
+  if (session) {
+    if (input.vnr_candidate) session.vnr_candidate = input.vnr_candidate;
+    if (input.vnr_confirmed !== undefined) session.vnr_confirmed = input.vnr_confirmed;
+    if (birthdayMerge.value) session.birthday_customer = birthdayMerge.value;
+    if (birthdayMerge.parse.status === 'complete') {
+      session.pending_birthday_day = null;
+      session.pending_birthday_month = null;
+    } else if (birthdayMerge.parse.status === 'incomplete_year') {
+      session.pending_birthday_day = birthdayMerge.parse.day ?? null;
+      session.pending_birthday_month = birthdayMerge.parse.month ?? null;
+    }
+    if (rawInput.check_insurance_number_format_result) {
+      session.check_insurance_number_format_result = rawInput.check_insurance_number_format_result;
+    }
+    if (rawInput.get_customer_by_insurance_number_result) {
+      session.get_customer_by_insurance_number_result = rawInput.get_customer_by_insurance_number_result;
+      if (rawInput.get_customer_by_insurance_number_result !== 'not_called') {
+        session.attempts.vnr_lookup_attempts += 1;
+      }
+    }
+    if (rawInput.check_birthday_result) {
+      session.check_birthday_result = rawInput.check_birthday_result;
+      if (rawInput.check_birthday_result !== 'not_called') {
+        session.attempts.birthday_check_attempts += 1;
+      }
+    }
+    if (rawInput.check_birthday_error) session.check_birthday_error = rawInput.check_birthday_error;
+    if (rawInput.latest_customer_input && !input.vnr_candidate) {
+      session.attempts.vnr_request_attempts += 1;
+    }
+    if (rawInput.latest_customer_input && input.get_customer_by_insurance_number_result === 'found' && !birthdayMerge.value) {
+      session.attempts.birthday_collection_attempts += 1;
+    }
+  }
+
   const transfer = maybeTransferHuman('vnr', input.customer_requested_human, input.office_hours);
-  if (transfer) return transfer;
+  if (transfer) {
+    saveSessionState(rawInput.session_id, session ?? emptySessionState());
+    return attachSessionDebug(transfer, rawInput.session_id, session);
+  }
 
   if (isMissingBirthdaySystem(input.check_birthday_error)) {
-    return makeResult('vnr', {
+    return attachSessionDebug(makeResult('vnr', {
       ok: false,
       next_action: 'TECHNICAL_ESCALATION',
       say: 'Es gibt gerade ein technisches Problem bei der Verifizierung. Ich gebe das intern weiter.',
       reason: 'Birthday verification cannot run because birthday_system is missing.',
       missing_fields: ['birthday_system'],
       safety_flags: ['missing_birthday_system', 'block_birthday_loop'],
-    });
+    }), rawInput.session_id, session);
   }
 
   if (!input.vnr_candidate) {
     if ((input.vnr_request_count ?? 0) >= 2) {
-      return makeResult('vnr', {
+      return attachSessionDebug(makeResult('vnr', {
         ok: false,
         next_action: 'TRANSITION_NICHT_IDENTIFIZIERT',
         say: 'Ich konnte Sie leider nicht eindeutig identifizieren.',
@@ -941,10 +1267,10 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
         missing_fields: ['vnr'],
         safety_flags: ['vnr_request_limit_reached'],
         transition_to: 'nicht_identifiziert',
-      });
+      }), rawInput.session_id, session);
     }
 
-    return makeResult('vnr', {
+    const result = makeResult('vnr', {
       ok: true,
       next_action: 'ASK_VNR',
       say: 'Bitte nennen Sie mir Ihre Versicherungsnummer.',
@@ -952,10 +1278,12 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
       missing_fields: ['vnr'],
       safety_flags: [],
     });
+    saveSessionState(rawInput.session_id, session ?? emptySessionState());
+    return attachSessionDebug(result, rawInput.session_id, session);
   }
 
   if (input.vnr_confirmed !== true) {
-    return makeResult('vnr', {
+    const result = makeResult('vnr', {
       ok: true,
       next_action: 'CONFIRM_VNR',
       say: `Ich habe ${input.vnr_candidate} verstanden. Ist das korrekt?`,
@@ -963,10 +1291,12 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
       missing_fields: [],
       safety_flags: [],
     });
+    saveSessionState(rawInput.session_id, session ?? emptySessionState());
+    return attachSessionDebug(result, rawInput.session_id, session);
   }
 
   if (input.check_insurance_number_format_result === 'not_called') {
-    return makeResult('vnr', {
+    const result = makeResult('vnr', {
       ok: true,
       next_action: 'CALL_CHECK_INSURANCE_NUMBER_FORMAT',
       say: '',
@@ -975,11 +1305,13 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
       safety_flags: [],
       function_to_call: 'check_insurance_number_format',
     });
+    saveSessionState(rawInput.session_id, session ?? emptySessionState());
+    return attachSessionDebug(result, rawInput.session_id, session);
   }
 
   if (input.check_insurance_number_format_result === 'invalid') {
     if ((input.vnr_request_count ?? 0) >= 2) {
-      return makeResult('vnr', {
+      return attachSessionDebug(makeResult('vnr', {
         ok: false,
         next_action: 'TRANSITION_NICHT_IDENTIFIZIERT',
         say: 'Ich konnte die Versicherungsnummer leider nicht eindeutig verarbeiten.',
@@ -987,10 +1319,10 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
         missing_fields: ['vnr'],
         safety_flags: ['vnr_format_limit_reached'],
         transition_to: 'nicht_identifiziert',
-      });
+      }), rawInput.session_id, session);
     }
 
-    return makeResult('vnr', {
+    const result = makeResult('vnr', {
       ok: true,
       next_action: 'ASK_VNR',
       say: 'Bitte nennen Sie mir Ihre Versicherungsnummer noch einmal.',
@@ -998,21 +1330,23 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
       missing_fields: ['vnr'],
       safety_flags: ['vnr_format_retry'],
     });
+    saveSessionState(rawInput.session_id, session ?? emptySessionState());
+    return attachSessionDebug(result, rawInput.session_id, session);
   }
 
   if (input.check_insurance_number_format_result === 'error') {
-    return makeResult('vnr', {
+    return attachSessionDebug(makeResult('vnr', {
       ok: false,
       next_action: 'TECHNICAL_ESCALATION',
       say: 'Es gibt gerade ein technisches Problem bei der Verifizierung. Ich gebe das intern weiter.',
       reason: 'VNR format check returned an error.',
       missing_fields: [],
       safety_flags: ['vnr_format_error'],
-    });
+    }), rawInput.session_id, session);
   }
 
   if (input.get_customer_by_insurance_number_result === 'not_called') {
-    return makeResult('vnr', {
+    const result = makeResult('vnr', {
       ok: false,
       next_action: 'CALL_GET_CUSTOMER_BY_INSURANCE_NUMBER',
       say: '',
@@ -1022,11 +1356,13 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
       safety_flags: ['blocked_check_birthday_before_customer_lookup'],
       function_to_call: 'get_customer_by_insurance_number',
     });
+    saveSessionState(rawInput.session_id, session ?? emptySessionState());
+    return attachSessionDebug(result, rawInput.session_id, session);
   }
 
   if (input.get_customer_by_insurance_number_result === 'not_found') {
     if ((input.vnr_lookup_attempts ?? 0) >= 2) {
-      return makeResult('vnr', {
+      return attachSessionDebug(makeResult('vnr', {
         ok: false,
         next_action: 'TRANSITION_NICHT_IDENTIFIZIERT',
         say: 'Ich konnte Sie leider nicht eindeutig identifizieren.',
@@ -1034,10 +1370,10 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
         missing_fields: [],
         safety_flags: ['vnr_lookup_limit_reached'],
         transition_to: 'nicht_identifiziert',
-      });
+      }), rawInput.session_id, session);
     }
 
-    return makeResult('vnr', {
+    const result = makeResult('vnr', {
       ok: true,
       next_action: 'ASK_VNR',
       say: 'Ich konnte Sie damit noch nicht finden. Bitte nennen oder bestätigen Sie Ihre Versicherungsnummer noch einmal.',
@@ -1045,21 +1381,23 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
       missing_fields: ['vnr'],
       safety_flags: ['vnr_lookup_retry'],
     });
+    saveSessionState(rawInput.session_id, session ?? emptySessionState());
+    return attachSessionDebug(result, rawInput.session_id, session);
   }
 
   if (input.get_customer_by_insurance_number_result === 'error') {
-    return makeResult('vnr', {
+    return attachSessionDebug(makeResult('vnr', {
       ok: false,
       next_action: 'TECHNICAL_ESCALATION',
       say: 'Es gibt gerade ein technisches Problem bei der Verifizierung. Ich gebe das intern weiter.',
       reason: 'Customer lookup by insurance number returned an error.',
       missing_fields: [],
       safety_flags: ['vnr_lookup_error'],
-    });
+    }), rawInput.session_id, session);
   }
 
   if (birthdayMerge.parse.status === 'incomplete_year') {
-    return makeResult('vnr', {
+    const result = makeResult('vnr', {
       ok: true,
       next_action: 'ASK_BIRTH_YEAR',
       say: 'Bitte nennen Sie mir noch das Geburtsjahr vollständig.',
@@ -1067,22 +1405,24 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
       missing_fields: ['birth_year'],
       safety_flags: [],
     });
+    saveSessionState(rawInput.session_id, session ?? emptySessionState());
+    return attachSessionDebug(result, rawInput.session_id, session);
   }
 
   if (birthdayMerge.parse.status === 'impossible') {
-    return makeResult('vnr', {
+    return attachSessionDebug(makeResult('vnr', {
       ok: false,
       next_action: 'ASK_BIRTHDAY',
       say: 'Das Geburtsdatum konnte ich so nicht verarbeiten. Bitte nennen Sie es noch einmal vollständig.',
       reason: birthdayMerge.parse.reason ?? 'Birthday was impossible or ambiguous.',
       missing_fields: ['birthday_customer'],
       safety_flags: ['birthday_invalid'],
-    });
+    }), rawInput.session_id, session);
   }
 
   if (!input.birthday_customer) {
     if ((input.birthday_request_count ?? 0) >= 2) {
-      return makeResult('vnr', {
+      return attachSessionDebug(makeResult('vnr', {
         ok: false,
         next_action: 'TRANSITION_NICHT_IDENTIFIZIERT',
         say: 'Ich konnte Sie leider nicht eindeutig verifizieren.',
@@ -1090,10 +1430,10 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
         missing_fields: ['birthday_customer'],
         safety_flags: ['birthday_request_limit_reached'],
         transition_to: 'nicht_identifiziert',
-      });
+      }), rawInput.session_id, session);
     }
 
-    return makeResult('vnr', {
+    const result = makeResult('vnr', {
       ok: true,
       next_action: 'ASK_BIRTHDAY',
       say: 'Bitte nennen Sie mir zur Verifizierung Ihr Geburtsdatum.',
@@ -1101,10 +1441,12 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
       missing_fields: ['birthday_customer'],
       safety_flags: [],
     });
+    saveSessionState(rawInput.session_id, session ?? emptySessionState());
+    return attachSessionDebug(result, rawInput.session_id, session);
   }
 
   if (input.check_birthday_result === 'success') {
-    return makeResult('vnr', {
+    return attachSessionDebug(makeResult('vnr', {
       ok: true,
       next_action: 'TRANSITION_WEITER',
       say: 'Danke, die Verifizierung ist abgeschlossen.',
@@ -1112,12 +1454,12 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
       missing_fields: [],
       safety_flags: [],
       transition_to: 'weiter',
-    });
+    }), rawInput.session_id, session);
   }
 
   if (input.check_birthday_result === 'failed') {
     if ((input.birthday_check_attempts ?? 0) >= 2 || (input.birthday_request_count ?? 0) >= 2) {
-      return makeResult('vnr', {
+      return attachSessionDebug(makeResult('vnr', {
         ok: false,
         next_action: 'TRANSITION_NICHT_IDENTIFIZIERT',
         say: 'Ich konnte Sie leider nicht eindeutig verifizieren.',
@@ -1125,10 +1467,10 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
         missing_fields: [],
         safety_flags: ['birthday_check_limit_reached'],
         transition_to: 'nicht_identifiziert',
-      });
+      }), rawInput.session_id, session);
     }
 
-    return makeResult('vnr', {
+    const result = makeResult('vnr', {
       ok: true,
       next_action: 'ASK_BIRTHDAY',
       say: 'Bitte nennen Sie mir Ihr Geburtsdatum noch einmal zur Verifizierung.',
@@ -1136,20 +1478,21 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
       missing_fields: ['birthday_customer'],
       safety_flags: ['birthday_retry'],
     });
+    saveSessionState(rawInput.session_id, session ?? emptySessionState());
+    return attachSessionDebug(result, rawInput.session_id, session);
   }
 
   if (input.birthday_system_available === false) {
-    return makeResult('vnr', {
+    return attachSessionDebug(makeResult('vnr', {
       ok: false,
       next_action: 'TECHNICAL_ESCALATION',
       say: 'Es gibt gerade ein technisches Problem bei der Verifizierung. Ich gebe das intern weiter.',
       reason: 'Birthday system is unavailable, so check_birthday is not safe to call.',
       missing_fields: ['birthday_system'],
       safety_flags: ['missing_birthday_system', 'block_birthday_loop'],
-    });
+    }), rawInput.session_id, session);
   }
-
-  return makeResult('vnr', {
+  const result = makeResult('vnr', {
     ok: true,
     next_action: 'CALL_CHECK_BIRTHDAY',
     say: '',
@@ -1158,4 +1501,6 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
     safety_flags: [],
     function_to_call: 'check_birthday',
   });
+  saveSessionState(rawInput.session_id, session ?? emptySessionState());
+  return attachSessionDebug(result, rawInput.session_id, session);
 }

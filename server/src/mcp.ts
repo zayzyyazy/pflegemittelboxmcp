@@ -149,6 +149,7 @@ export function createMcpServer(): McpServer {
     'pmb_verification_phone_brain',
     'Deterministic phone verification step controller. Use only after get_customer_by_phone already found a customer.',
     {
+      session_id: z.string().optional(),
       phone_lookup_found: z.boolean().optional(),
       latest_customer_input: z.string().optional(),
       birthday_customer: z.string().optional(),
@@ -173,6 +174,7 @@ export function createMcpServer(): McpServer {
     'pmb_verification_address_brain',
     'Deterministic address fallback verification step controller for PLZ + house number + birthday.',
     {
+      session_id: z.string().optional(),
       phone_lookup_found: z.boolean().optional(),
       latest_customer_input: z.string().optional(),
       plz: z.string().optional(),
@@ -198,6 +200,7 @@ export function createMcpServer(): McpServer {
     'pmb_verification_vnr_brain',
     'Deterministic VNR verification step controller that enforces the safe order: confirm VNR, format check, customer lookup, then birthday check.',
     {
+      session_id: z.string().optional(),
       latest_customer_input: z.string().optional(),
       vnr_raw: z.string().optional(),
       vnr_candidate: z.string().optional(),
