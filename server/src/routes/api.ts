@@ -25,6 +25,11 @@ import {
   runPostCallEmailNotifier,
 } from '../tools/post-call-email-notifier.js';
 import {
+  coerceVerificationMethodRouterInput,
+  runVerificationMethodRouter,
+} from '../tools/verification-method-router.js';
+import { LEAPING_VERIFICATION_METHOD_ROUTER_SCHEMA } from '../tools/verification-leaping-schemas.js';
+import {
   coerceVerificationAddressBrainInput,
   coerceVerificationPhoneBrainInput,
   coerceVerificationVnrBrainInput,
@@ -165,6 +170,14 @@ const TOOL_DEFS = [
       },
       required: [],
     },
+  },
+  {
+    name: 'pmb_verification_method_router',
+    description:
+      'Clone-only verification method router. Chooses phone, address, or VNR path and stores it in MCP session.',
+    category: 'guardrail',
+    safe: true,
+    inputSchema: LEAPING_VERIFICATION_METHOD_ROUTER_SCHEMA,
   },
   {
     name: 'pmb_verification_phone_brain',
@@ -424,6 +437,10 @@ apiRouter.post('/tools/:name/test', async (req, res) => {
     } else if (name === 'pmb_debug_echo_session_only') {
       output = runDebugEchoSessionOnly(
         coerceDebugEchoSessionOnlyInput(input as Record<string, unknown>)
+      );
+    } else if (name === 'pmb_verification_method_router') {
+      output = runVerificationMethodRouter(
+        coerceVerificationMethodRouterInput(input as Record<string, unknown>)
       );
     } else if (name === 'pmb_verification_phone_brain') {
       output = toDashboardVerificationBrainResponse(

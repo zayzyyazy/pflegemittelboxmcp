@@ -271,10 +271,27 @@ function getSessionState(sessionId: string | undefined): VerificationSessionStat
   return structuredClone(created);
 }
 
+/** Clone router + tests: load or create session state for a stable session_id. */
+export function loadVerificationSessionState(
+  sessionId: string | undefined
+): VerificationSessionState | null {
+  return getSessionState(sessionId);
+}
+
 function saveSessionState(sessionId: string | undefined, state: VerificationSessionState) {
   if (!sessionId) return;
   verificationSessions.set(sessionId, structuredClone(state));
 }
+
+/** Persist verification session after router or brain updates. */
+export function storeVerificationSessionState(
+  sessionId: string | undefined,
+  state: VerificationSessionState
+): void {
+  saveSessionState(sessionId, state);
+}
+
+export type { VerificationSessionState };
 
 function toNullableString(value: string | undefined): string | null {
   return value ?? null;

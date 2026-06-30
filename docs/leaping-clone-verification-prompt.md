@@ -27,10 +27,36 @@ Nach jeder relevanten Kundenantwort und nach jedem nativen Funktionsresultat ruf
 
 Keine eigenen Wiederholungen, Fallbacks, Erklärungen oder Recovery-Texte.
 
-**Warnung:** Verwende **nicht** das Legacy-Tool `pmb_verification_brain`. Nur diese drei Brains:
+**Warnung:** Verwende **nicht** das Legacy-Tool `pmb_verification_brain`. Nur diese Tools:
+- `pmb_verification_method_router` (Pfadwahl, vor dem Dialog)
 - `pmb_verification_phone_brain`
 - `pmb_verification_address_brain`
 - `pmb_verification_vnr_brain`
+
+---
+
+## Ablauf: Function vor Dialog
+
+**Vor** der Kundenidentifikations-Dialogstage muss ein **Function Node** `pmb_verification_method_router` laufen.
+
+Marie darf **nicht** selbst fragen, ob VNR oder Adresse — der Router entscheidet.
+
+| Schritt | Was passiert |
+|---|---|
+| 1 | Function Node ruft `pmb_verification_method_router` auf |
+| 2 | Router wählt `phone` / `address` / `vnr` und speichert den Pfad in der MCP-Session |
+| 3 | Wenn `say` nicht leer: nur diesen Text sprechen (Methodenwahl) |
+| 4 | Wenn `next_brain` gesetzt: **sofort** dieses Brain aufrufen |
+| 5 | Dialogstage folgt **nur** dem gewählten Brain — keine eigene Pfadwahl |
+
+Router-Inputs (nur diese binden):
+- `session_id` = `leaping_conversation_id_hex`
+- `phone_lookup_found` (Ergebnis von `get_customer_by_phone`)
+- `latest_customer_input` (nur Antwort auf die Methodenwahl-Frage)
+
+Router-Output: `action_type`, `say`, `active_brain`, `next_brain`, `requires_followup_mcp_call`, `session_id_received`, `session_mode`
+
+Wenn `phone_lookup_found=true`: Router wählt automatisch `phone` — keine Methodenfrage.
 
 ---
 
@@ -46,20 +72,29 @@ Nicht geeignet als `session_id`: einzelne Function-Call-IDs, Tool-Call-IDs, IDs 
 
 ---
 
-## Stage-Start
+## Stage-Start (nach Router)
 
 `get_customer_by_phone` wurde am Anfang bereits automatisch aufgerufen. **Nicht erneut aufrufen.**
 
-Beim **ersten** MCP-Aufruf genau **ein** Brain:
+Der **Router** hat den Verifizierungspfad bereits gewählt. Rufe **nur** das Brain aus `next_brain` / `active_brain` auf:
 
-| Bedingung | Brain | Zusätzliche Argumente |
-|---|---|---|
-| Telefon-Lookup fand Kunden | `pmb_verification_phone_brain` | `phone_lookup_found=true`, `session_id` |
-| Telefon-Lookup fand keinen Kunden | `pmb_verification_address_brain` | `phone_lookup_found=false`, `session_id` |
+| `active_brain` | Brain |
+|---|---|
+| `phone` | `pmb_verification_phone_brain` |
+| `address` | `pmb_verification_address_brain` |
+| `vnr` | `pmb_verification_vnr_brain` |
 
-Kein `latest_customer_input` beim Start. Kein Anliegen-Text.
+Beim **ersten Brain-Aufruf** immer mitgeben:
+- `session_id` = `leaping_conversation_id_hex`
+- `phone_lookup_found`
+- kein Anliegen als `latest_customer_input`
 
 Wenn der Kunde ausdrücklich sagt, dass er Neukunde ist: sofort `nicht identifiziert`.
+
+**Leaping bindet nur diese Brain-Inputs** (keine Counter, keine internen Felder):
+- `session_id`, `latest_customer_input`, `phone_lookup_found`
+- `get_customer_by_plz_geb_result`, `get_customer_by_insurance_number_result`
+- `check_insurance_number_format_result`, `check_birthday_result`, `check_birthday_error`
 
 ---
 
@@ -177,11 +212,14 @@ Du führst mechanisch aus, was `action_type`, `say`, `function_name`, `function_
 
 # Leaping Node Config Checklist
 
+- [ ] **Function Node vor Dialog:** `pmb_verification_method_router` mit `session_id` + `phone_lookup_found`
+- [ ] Nach Router: `next_brain` aufrufen, nicht selbst Verifizierungstext erfinden
 - [ ] `session_id` an `leaping_conversation_id_hex` binden (fest, nicht LLM-generiert)
-- [ ] Optionale MCP-Felder **nicht** per LLM befüllen, wenn nicht nötig (Session-Smoke-Test: `pmb_debug_echo_session_only`)
+- [ ] Optionale MCP-Felder **nicht** per LLM befüllen (Session-Smoke-Test: `pmb_debug_echo_session_only`)
+- [ ] Brain-Inputs auf die 8 externen Felder beschränken — keine Counter/VNR-Kandidaten/internen State-Felder binden
 - [ ] MCP Function Nodes für deterministische Ausführung nutzen
 - [ ] Native Funktionsaufrufe **nur** mit MCP-`function_arguments` (keine LLM-erfundenen PLZ/HNR/bday)
 - [ ] Transition-Branch auf `action_type` **und** `transition_name` prüfen (nicht `transition_to` / `allowed_to_transition`)
 - [ ] Hardcodierte Verifizierungstexte aus Dialogue/Response Nodes entfernen — nur MCP-`say` sprechen
-- [ ] Legacy `pmb_verification_brain` **nicht** verwenden — nur method-spezifische Brains
+- [ ] Legacy `pmb_verification_brain` **nicht** verwenden
 - [ ] Nach `CALL_FUNCTION`: MCP-Brain mit Ergebnisfeld erneut aufrufen, wenn `requires_followup_mcp_call=true`

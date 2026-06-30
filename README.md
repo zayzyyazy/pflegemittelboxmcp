@@ -150,7 +150,7 @@ Leaping exposes stable reserved conversation fields:
 - `leaping_conversation_id_hex`
 - `leaping_conversation_id_int`
 
-For deterministic verification, prefer a **Leaping Function node** for MCP brain calls (not free-form LLM tool invocation) and bind tool arguments like this:
+For deterministic verification, use a **Function node before the dialogue stage** to call `pmb_verification_method_router`, then follow `next_brain`. Prefer **Leaping Function nodes** for MCP brain calls (not free-form LLM tool invocation) and bind tool arguments like this:
 
 | MCP argument | Leaping binding |
 |---|---|
@@ -159,6 +159,10 @@ For deterministic verification, prefer a **Leaping Function node** for MCP brain
 | `phone_lookup_found` | result of `get_customer_by_phone` |
 | function result fields | native function output from the previous turn |
 
+**Router** (`pmb_verification_method_router`) exposes only `session_id`, `latest_customer_input`, and `phone_lookup_found`. It chooses `phone` / `address` / `vnr`, stores the path in MCP session state, and returns `next_brain`.
+
+**Verification brains** exposed to Leaping only accept: `session_id`, `latest_customer_input`, `phone_lookup_found`, `get_customer_by_plz_geb_result`, `get_customer_by_insurance_number_result`, `check_insurance_number_format_result`, `check_birthday_result`, `check_birthday_error`. Internal counters and state fields are session-managed — do not bind them in Leaping.
+
 Rules:
 
 - **Use** `session_id = leaping_conversation_id_hex` on every MCP brain call in the same conversation.
@@ -166,7 +170,7 @@ Rules:
 - **Use** `function_arguments` verbatim for native Leaping function calls when MCP returns `action_type = CALL_FUNCTION`.
 - **If** `session_id` is missing, MCP runs in `stateless` mode, sets `missing_session_id`, and returns `known_values_required_next_call` — Leaping must echo those known values on the next turn.
 
-On the first verification MCP call, always pass `phone_lookup_found` from the real `get_customer_by_phone` result.
+On the first verification MCP call, always pass `phone_lookup_found` from the real `get_customer_by_phone` result to the **router**, then call the brain named in `next_brain`.
 
 Pass `latest_customer_input` only as the customer's answer to the current verification question. Do not pass the customer's Anliegen, requested month, or general request text as `latest_customer_input`.
 

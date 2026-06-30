@@ -38,6 +38,14 @@ import {
   runPostCallEmailNotifier,
 } from '../tools/post-call-email-notifier.js';
 import {
+  coerceVerificationMethodRouterInput,
+  runVerificationMethodRouter,
+} from '../tools/verification-method-router.js';
+import {
+  LEAPING_VERIFICATION_BRAIN_SCHEMA,
+  LEAPING_VERIFICATION_METHOD_ROUTER_SCHEMA,
+} from '../tools/verification-leaping-schemas.js';
+import {
   coerceVerificationAddressBrainInput,
   coerceVerificationPhoneBrainInput,
   coerceVerificationVnrBrainInput,
@@ -157,72 +165,29 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: 'pmb_verification_method_router',
+    description:
+      'Clone-only verification method router. Runs after intent detection and before Kundenidentifikation. ' +
+      'Chooses phone, address, or VNR path and stores it in MCP session. Does not perform CRM lookups.',
+    inputSchema: LEAPING_VERIFICATION_METHOD_ROUTER_SCHEMA,
+  },
+  {
     name: 'pmb_verification_phone_brain',
     description:
       'Deterministic phone verification controller. Use only after get_customer_by_phone already found a customer.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        phone_lookup_found: { type: 'boolean' },
-        latest_customer_input: { type: 'string' },
-        birthday_customer: { type: 'string' },
-        check_birthday_result: { type: 'string' },
-        check_birthday_error: { type: 'string' },
-        birthday_system_available: { type: 'boolean' },
-        birthday_request_count: { type: 'number' },
-        birthday_check_attempts: { type: 'number' },
-        customer_requested_human: { type: 'boolean' },
-        office_hours: { type: 'boolean' },
-      },
-      required: [],
-    },
+    inputSchema: LEAPING_VERIFICATION_BRAIN_SCHEMA,
   },
   {
     name: 'pmb_verification_address_brain',
     description:
       'Deterministic address fallback verification controller for PLZ + house number + birthday.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        phone_lookup_found: { type: 'boolean' },
-        latest_customer_input: { type: 'string' },
-        plz: { type: 'string' },
-        house_number: { type: 'string' },
-        birthday_customer: { type: 'string' },
-        get_customer_by_plz_geb_result: { type: 'string' },
-        address_lookup_attempts: { type: 'number' },
-        customer_requested_human: { type: 'boolean' },
-        office_hours: { type: 'boolean' },
-      },
-      required: [],
-    },
+    inputSchema: LEAPING_VERIFICATION_BRAIN_SCHEMA,
   },
   {
     name: 'pmb_verification_vnr_brain',
     description:
       'Deterministic VNR verification controller that blocks birthday check before customer lookup.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        latest_customer_input: { type: 'string' },
-        vnr_raw: { type: 'string' },
-        vnr_candidate: { type: 'string' },
-        vnr_confirmed: { type: 'boolean' },
-        check_insurance_number_format_result: { type: 'string' },
-        get_customer_by_insurance_number_result: { type: 'string' },
-        birthday_customer: { type: 'string' },
-        check_birthday_result: { type: 'string' },
-        check_birthday_error: { type: 'string' },
-        birthday_system_available: { type: 'boolean' },
-        vnr_request_count: { type: 'number' },
-        vnr_lookup_attempts: { type: 'number' },
-        birthday_request_count: { type: 'number' },
-        birthday_check_attempts: { type: 'number' },
-        customer_requested_human: { type: 'boolean' },
-        office_hours: { type: 'boolean' },
-      },
-      required: [],
-    },
+    inputSchema: LEAPING_VERIFICATION_BRAIN_SCHEMA,
   },
   {
     name: 'pmb_verification_brain',
@@ -404,6 +369,13 @@ async function runTool(
       const input = coerceDebugEchoSessionOnlyInput(args);
       const result = runDebugEchoSessionOnly(input);
       logCall('pmb_debug_echo_session_only', input, result, null, Date.now() - start);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+
+    case 'pmb_verification_method_router': {
+      const input = coerceVerificationMethodRouterInput(args);
+      const result = runVerificationMethodRouter(input);
+      logCall('pmb_verification_method_router', input, result, null, Date.now() - start);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
 
