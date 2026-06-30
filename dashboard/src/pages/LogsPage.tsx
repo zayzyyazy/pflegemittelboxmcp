@@ -1,8 +1,11 @@
 import { useEffect, useState, useRef, Fragment } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { fetchLogs, clearLogs } from '../api';
 import type { CallLog } from '../types';
 
 export default function LogsPage() {
+  const [searchParams] = useSearchParams();
+  const sessionFilter = searchParams.get('session_id') ?? '';
   const [logs, setLogs] = useState<CallLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -10,14 +13,14 @@ export default function LogsPage() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   function load() {
-    fetchLogs(100)
+    fetchLogs(sessionFilter ? 500 : 100, sessionFilter || undefined)
       .then((r) => setLogs(r.logs))
       .finally(() => setLoading(false));
   }
 
   useEffect(() => {
     load();
-  }, []);
+  }, [sessionFilter]);
 
   useEffect(() => {
     if (pollRef.current) clearInterval(pollRef.current);
@@ -50,9 +53,15 @@ export default function LogsPage() {
       <div className="row-between" style={{ marginBottom: 16 }}>
         <div>
           <p className="page-title">Call Logs</p>
-          <p className="page-sub">Every MCP tool call, whether from Leaping or the dashboard test form.</p>
+          <p className="page-sub">
+            Every MCP tool call, whether from Leaping or the dashboard test form.
+            {sessionFilter ? (
+              <> Filtered by session <code>{sessionFilter}</code>. <Link to="/sessions">Open session inspector</Link></>
+            ) : null}
+          </p>
         </div>
         <div className="gap-2">
+          <Link className="btn btn-sm btn-ghost" to="/sessions">🔍 Sessions</Link>
           <button
             className={`btn btn-sm ${live ? 'btn-primary' : 'btn-ghost'}`}
             onClick={() => setLive((v) => !v)}
@@ -81,6 +90,7 @@ export default function LogsPage() {
                   <th>#</th>
                   <th>Timestamp</th>
                   <th>Tool</th>
+                  <th>Session</th>
                   <th>Status</th>
                   <th>Duration</th>
                   <th>Input</th>
@@ -108,6 +118,13 @@ export default function LogsPage() {
                         </code>
                       </td>
                       <td>
+                        {log.session_id ? (
+                          <Link to={`/sessions/${encodeURIComponent(log.session_id)}`} onClick={(e) => e.stopPropagation()}>
+                            <code style={{ fontFamily: 'var(--mono)', fontSize: 11 }}>{log.session_id.slice(0, 12)}…</code>
+                          </Link>
+                        ) : '—'}
+                      </td>
+                      <td>
                         <span className={`badge ${log.error ? 'badge-risky' : 'badge-safe'}`}>
                           {log.error ? '✗ error' : '✓ ok'}
                         </span>
@@ -124,7 +141,7 @@ export default function LogsPage() {
 
                     {expanded === log.id && (
                       <tr>
-                        <td colSpan={8} style={{ padding: 0, background: '#f8f9fc' }}>
+                        <td colSpan={9} style={{ padding: 0, background: '#f8f9fc' }}>
                           <div style={{ padding: '12px 16px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                             <div>
                               <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-label)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>

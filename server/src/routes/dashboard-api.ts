@@ -179,7 +179,8 @@ dashboardApiRouter.delete('/test-cases/:id', (req, res) => {
 
 dashboardApiRouter.get('/logs', (req, res) => {
   const limit = Math.min(Number(req.query.limit ?? 100), 500);
-  res.json({ logs: getLogs(limit) });
+  const sessionId = typeof req.query.session_id === 'string' ? req.query.session_id : undefined;
+  res.json({ logs: getLogs(limit, sessionId) });
 });
 
 dashboardApiRouter.delete('/logs', (_req, res) => {

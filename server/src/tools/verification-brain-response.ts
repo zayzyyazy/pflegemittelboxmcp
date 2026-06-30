@@ -5,6 +5,7 @@ import type {
   VerificationSessionStoredValues,
   AddressAwaitingField,
 } from './verification-method-brains.js';
+import { sanitizeVerificationBrainSplitResponse } from './verification-brain-sanitize.js';
 
 export interface VerificationBrainController {
   ok: boolean;
@@ -17,6 +18,7 @@ export interface VerificationBrainController {
   active_brain: 'phone' | 'address' | 'vnr';
   session_id_received?: boolean;
   session_mode?: 'session' | 'stateless';
+  known_values_required_next_call?: Record<string, string>;
 }
 
 export interface VerificationBrainDebug {
@@ -87,6 +89,14 @@ export function splitVerificationBrainResponse(
     controller.session_mode = result.session_mode;
   }
 
+  if (
+    result.session_mode === 'stateless' &&
+    result.known_values_required_next_call &&
+    Object.keys(result.known_values_required_next_call).length > 0
+  ) {
+    controller.known_values_required_next_call = result.known_values_required_next_call;
+  }
+
   const debug: VerificationBrainDebug = {
     method: result.method,
     next_action: result.next_action,
@@ -117,18 +127,18 @@ export function toLeapingVerificationBrainResponse(
   return splitVerificationBrainResponse(result).controller;
 }
 
-/** Dashboard / operator tools: controller plus full debug envelope. */
+/** Dashboard / operator tools: controller plus sanitized debug envelope. */
 export function toDashboardVerificationBrainResponse(
   result: VerificationMethodBrainResult
 ): VerificationBrainSplitResponse {
-  return splitVerificationBrainResponse(result);
+  return sanitizeVerificationBrainSplitResponse(splitVerificationBrainResponse(result));
 }
 
-/** Log payload: always retain debug for SQLite logs. */
+/** Log payload: controller plus sanitized debug for SQLite logs. */
 export function toLoggedVerificationBrainResponse(
   result: VerificationMethodBrainResult
 ): VerificationBrainSplitResponse {
-  return splitVerificationBrainResponse(result);
+  return sanitizeVerificationBrainSplitResponse(splitVerificationBrainResponse(result));
 }
 
 const LEAPING_FORBIDDEN_KEYS = new Set([

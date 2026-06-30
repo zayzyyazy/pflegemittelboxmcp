@@ -134,6 +134,14 @@ The clone should ask the MCP what to do next and follow `action_type` exactly. M
 
 Do not rely on Leaping seeing `stored_values` or raw native lookup payloads — bind function results into the next MCP input instead.
 
+### Safety and observability
+
+- **Marie/Leaping** receives only the slim `controller` object (no `stored_values`, no raw CRM payloads).
+- **Dashboard / SQLite logs** store `{ controller, debug }` with sanitized inputs/outputs.
+- Native API results (`get_customer_by_plz_geb_result`, etc.) are summarized as `found` / `not_found` / `error` in logs — never full customer records.
+- Customer-provided values (spoken PLZ, house number, birthday, VNR) remain visible for operator debugging.
+- Use **Session Inspector** in the dashboard (`/ui/sessions/:session_id`) to view all MCP calls for one `leaping_conversation_id_hex` chronologically.
+
 ### Leaping clone setup (recommended)
 
 Leaping exposes stable reserved conversation fields:

@@ -5,6 +5,7 @@ import type { ServerStatus } from './types';
 import ToolsPage from './pages/ToolsPage';
 import LeapingFunctionsPage from './pages/LeapingFunctionsPage';
 import LogsPage from './pages/LogsPage';
+import SessionsPage from './pages/SessionsPage';
 import SettingsPage from './pages/SettingsPage';
 import AlertsPage from './pages/AlertsPage';
 
@@ -13,6 +14,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/leaping': 'Leaping Functions Reference',
   '/alerts': 'Recent Post-Call Alerts',
   '/logs': 'Call Logs',
+  '/sessions': 'Session Inspector',
   '/settings': 'Operations',
 };
 
@@ -61,6 +63,11 @@ export default function App() {
             </NavLink>
           </li>
           <li>
+            <NavLink to="/sessions">
+              <span className="icon">🔍</span> Session Inspector
+            </NavLink>
+          </li>
+          <li>
             <NavLink to="/logs">
               <span className="icon">📋</span> Call Logs
             </NavLink>
@@ -102,6 +109,8 @@ export default function App() {
             <Route path="/leaping" element={<LeapingFunctionsPage />} />
             <Route path="/alerts" element={<AlertsPage />} />
             <Route path="/logs" element={<LogsPage />} />
+            <Route path="/sessions" element={<SessionsPage />} />
+            <Route path="/sessions/:sessionId" element={<SessionsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Routes>
         </div>

@@ -36,6 +36,12 @@ export interface CallLog {
   output: string | null;
   error: string | null;
   duration_ms: number;
+  session_id?: string | null;
+  active_brain?: string | null;
+  action_type?: string | null;
+  function_name?: string | null;
+  transition_name?: string | null;
+  status?: string | null;
 }
 
 export interface Settings {

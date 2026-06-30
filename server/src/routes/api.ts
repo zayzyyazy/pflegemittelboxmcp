@@ -470,7 +470,8 @@ apiRouter.post('/tools/:name/test', async (req, res) => {
 // ── Call logs ────────────────────────────────────────────────────────────
 apiRouter.get('/logs', (req, res) => {
   const limit = Math.min(Number(req.query.limit ?? 50), 200);
-  res.json({ logs: getLogs(limit) });
+  const sessionId = typeof req.query.session_id === 'string' ? req.query.session_id : undefined;
+  res.json({ logs: getLogs(limit, sessionId) });
 });
 
 apiRouter.delete('/logs', (_req, res) => {

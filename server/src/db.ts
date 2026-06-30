@@ -3,6 +3,12 @@ import { DatabaseSync } from 'node:sqlite';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+import {
+  extractMcpCallLogMeta,
+  sanitizeMcpToolInput,
+  sanitizeMcpToolOutput,
+  type McpCallLogMeta,
+} from './tools/verification-brain-sanitize.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, '../../data');
@@ -60,6 +66,27 @@ db.exec(`
   );
 `);
 
+function ensureCallLogColumns(): void {
+  const columns: Array<[string, string]> = [
+    ['session_id', 'TEXT'],
+    ['active_brain', 'TEXT'],
+    ['action_type', 'TEXT'],
+    ['function_name', 'TEXT'],
+    ['transition_name', 'TEXT'],
+    ['status', 'TEXT'],
+  ];
+  for (const [name, type] of columns) {
+    try {
+      db.exec(`ALTER TABLE call_logs ADD COLUMN ${name} ${type}`);
+    } catch {
+      // column already exists
+    }
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_call_logs_session_id ON call_logs(session_id)');
+}
+
+ensureCallLogColumns();
+
 // Seed defaults only when the key does not yet exist
 const defaults: [string, string][] = [
   ['mcp_url', 'http://localhost:3001'],
@@ -74,8 +101,14 @@ for (const [k, v] of defaults) {
 // ── Call log helpers ────────────────────────────────────────────────────
 
 const insertLog = db.prepare(`
-  INSERT INTO call_logs (tool_name, input, output, error, duration_ms)
-  VALUES (@toolName, @input, @output, @error, @durationMs)
+  INSERT INTO call_logs (
+    tool_name, input, output, error, duration_ms,
+    session_id, active_brain, action_type, function_name, transition_name, status
+  )
+  VALUES (
+    @toolName, @input, @output, @error, @durationMs,
+    @sessionId, @activeBrain, @actionType, @functionName, @transitionName, @status
+  )
 `);
 
 export function logCall(
@@ -83,14 +116,28 @@ export function logCall(
   input: unknown,
   output: unknown,
   error: string | null,
-  durationMs: number
+  durationMs: number,
+  metaOverride?: Partial<McpCallLogMeta>
 ): void {
+  const sanitizedInput = sanitizeMcpToolInput(toolName, input);
+  const sanitizedOutput = sanitizeMcpToolOutput(toolName, output);
+  const meta = {
+    ...extractMcpCallLogMeta(toolName, sanitizedInput, sanitizedOutput, error),
+    ...metaOverride,
+  };
+
   insertLog.run({
     toolName,
-    input: JSON.stringify(input),
-    output: output !== null ? JSON.stringify(output) : null,
+    input: JSON.stringify(sanitizedInput),
+    output: sanitizedOutput !== null && sanitizedOutput !== undefined ? JSON.stringify(sanitizedOutput) : null,
     error,
     durationMs,
+    sessionId: meta.session_id,
+    activeBrain: meta.active_brain,
+    actionType: meta.action_type,
+    functionName: meta.function_name,
+    transitionName: meta.transition_name,
+    status: meta.status,
   });
 }
 
@@ -102,9 +149,26 @@ export interface CallLog {
   output: string | null;
   error: string | null;
   duration_ms: number;
+  session_id?: string | null;
+  active_brain?: string | null;
+  action_type?: string | null;
+  function_name?: string | null;
+  transition_name?: string | null;
+  status?: string | null;
 }
 
-export function getLogs(limit = 50): CallLog[] {
+export function getLogs(limit = 50, sessionId?: string): CallLog[] {
+  if (sessionId?.trim()) {
+    return db
+      .prepare(
+        `SELECT * FROM call_logs
+         WHERE session_id = @sessionId
+         ORDER BY id ASC
+         LIMIT @limit`
+      )
+      .all({ sessionId: sessionId.trim(), limit }) as unknown as CallLog[];
+  }
+
   return db
     .prepare('SELECT * FROM call_logs ORDER BY id DESC LIMIT @limit')
     .all({ limit }) as unknown as CallLog[];

@@ -35,8 +35,10 @@ export function testTool(name: string, input: Record<string, unknown>) {
 }
 
 // ── Logs ────────────────────────────────────────────────────────────────
-export function fetchLogs(limit = 50) {
-  return request<{ logs: import('./types').CallLog[] }>(`/logs?limit=${limit}`);
+export function fetchLogs(limit = 50, sessionId?: string) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (sessionId?.trim()) params.set('session_id', sessionId.trim());
+  return request<{ logs: import('./types').CallLog[] }>(`/logs?${params.toString()}`);
 }
 
 export function clearLogs() {
