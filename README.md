@@ -139,6 +139,28 @@ On the first verification MCP call, always pass `phone_lookup_found` from the re
 
 Pass `latest_customer_input` only as the customer's answer to the current verification question. Do not pass the customer's Anliegen, requested month, or general request text as `latest_customer_input`.
 
+### Clone session-id smoke test (`pmb_debug_echo_session`)
+
+For a one-call Leaping clone smoke test before wiring verification brains, expose only `pmb_debug_echo_session` in a Function node and bind:
+
+| MCP argument | Leaping binding |
+|---|---|
+| `session_id` | `leaping_conversation_id_hex` |
+
+Example response when binding works:
+
+```json
+{
+  "ok": true,
+  "received_session_id": "a1b2c3d4e5f6789012345678abcdef01",
+  "session_id_received": true,
+  "latest_customer_input": null,
+  "received_fields": { "session_id": "a1b2c3d4e5f6789012345678abcdef01", ... }
+}
+```
+
+Do **not** add this tool to production Marie. It is for clone MCP contract verification only.
+
 Important: the MCP only reduces wrong-order decisions if it is used as a gatekeeper. If all native Leaping functions stay enabled in one large stage, Marie can still call functions in the wrong order. The safer setup is to restrict enabled native functions per clone stage so the clone can only execute the function that the MCP brain explicitly allows.
 
 ### Clone verification test guidance
@@ -147,10 +169,19 @@ Run the focused Leaping integration checks before merging clone-brain changes:
 
 ```bash
 cd server
+node --import tsx --test src/tools/verification-leaping-session-id.test.ts
 node --import tsx --test src/tools/verification-leaping-integration.test.ts
 node --import tsx --test src/tools/verification-brain-scenarios.test.ts
 SCENARIO_STRICT=1 node --import tsx --test src/tools/verification-brain-scenarios.test.ts
 ```
+
+The session-id contract file (`verification-leaping-session-id.test.ts`) covers:
+
+- UUID-style `leaping_conversation_id` and hex-style `leaping_conversation_id_hex` as `session_id`
+- same-hex persistence across PLZ → HNR → birthday, and isolation across different hex sessions
+- stateless `missing_session_id` when `session_id` is absent
+- per-call `call_...` IDs do not merge state
+- `session_id_received`, exact `session_id` echo, and `known_values_required_next_call` in stateful vs stateless mode
 
 The 20-test Leaping integration file covers:
 

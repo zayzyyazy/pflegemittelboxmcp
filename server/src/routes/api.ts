@@ -6,6 +6,10 @@ import { Router } from 'express';
 import { appConfig } from '../config.js';
 import { parseAddressVerificationGuardrail } from '../tools/address-verification-guardrail.js';
 import {
+  coerceDebugEchoSessionInput,
+  runDebugEchoSession,
+} from '../tools/debug-echo-session.js';
+import {
   coerceDeliveryStatusReasonerInput,
   runDeliveryStatusReasoner,
 } from '../tools/delivery-status-reasoner.js';
@@ -123,6 +127,25 @@ const TOOL_DEFS = [
         },
       },
       required: ['raw_text', 'attempt'],
+    },
+  },
+  {
+    name: 'pmb_debug_echo_session',
+    description:
+      'Clone-only debug helper: echoes session_id and bound fields from Leaping Function nodes. ' +
+      'Do not wire into production Marie.',
+    category: 'debug',
+    safe: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string' },
+        latest_customer_input: { type: 'string' },
+        plz: { type: 'string' },
+        hnr: { type: 'string' },
+        bday: { type: 'string' },
+      },
+      required: [],
     },
   },
   {
@@ -376,6 +399,10 @@ apiRouter.post('/tools/:name/test', async (req, res) => {
         return;
       }
       output = parseAddressVerificationGuardrail(guardrailInput);
+    } else if (name === 'pmb_debug_echo_session') {
+      output = runDebugEchoSession(
+        coerceDebugEchoSessionInput(input as Record<string, unknown>)
+      );
     } else if (name === 'pmb_verification_phone_brain') {
       output = runVerificationPhoneBrain(
         coerceVerificationPhoneBrainInput(input as Record<string, unknown>)

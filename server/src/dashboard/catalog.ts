@@ -2,6 +2,10 @@ import { appConfig } from '../config.js';
 import { logCall, recordPostCallAlertHistory } from '../db.js';
 import { parseAddressVerificationGuardrail } from '../tools/address-verification-guardrail.js';
 import {
+  coerceDebugEchoSessionInput,
+  runDebugEchoSession,
+} from '../tools/debug-echo-session.js';
+import {
   coerceDeliveryStatusReasonerInput,
   runDeliveryStatusReasoner,
 } from '../tools/delivery-status-reasoner.js';
@@ -99,6 +103,25 @@ export const TOOL_DEFS = [
         attempt: { type: 'number', description: 'Attempt number, usually 1 or 2.' },
       },
       required: ['raw_text', 'attempt'],
+    },
+  },
+  {
+    name: 'pmb_debug_echo_session',
+    description:
+      'Clone-only debug helper: echoes session_id and bound fields from Leaping Function nodes. ' +
+      'Do not wire into production Marie. Bind session_id = leaping_conversation_id_hex to verify stable IDs.',
+    category: 'debug',
+    safe: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string' },
+        latest_customer_input: { type: 'string' },
+        plz: { type: 'string' },
+        hnr: { type: 'string' },
+        bday: { type: 'string' },
+      },
+      required: [],
     },
   },
   {
@@ -244,6 +267,8 @@ export async function runDashboardTool(name: string, input: Record<string, unkno
         throw new Error('"attempt" must be a number >= 1');
       }
       output = parseAddressVerificationGuardrail(guardrailInput);
+    } else if (name === 'pmb_debug_echo_session') {
+      output = runDebugEchoSession(coerceDebugEchoSessionInput(input));
     } else if (name === 'pmb_verification_phone_brain') {
       output = runVerificationPhoneBrain(coerceVerificationPhoneBrainInput(input));
     } else if (name === 'pmb_verification_address_brain') {

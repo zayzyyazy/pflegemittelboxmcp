@@ -19,6 +19,10 @@ import { appConfig } from '../config.js';
 import { createMcpServer, sseTransports } from '../mcp.js';
 import { parseAddressVerificationGuardrail } from '../tools/address-verification-guardrail.js';
 import {
+  coerceDebugEchoSessionInput,
+  runDebugEchoSession,
+} from '../tools/debug-echo-session.js';
+import {
   coerceDeliveryStatusReasonerInput,
   runDeliveryStatusReasoner,
 } from '../tools/delivery-status-reasoner.js';
@@ -113,6 +117,23 @@ const MCP_TOOLS = [
         },
       },
       required: ['raw_text', 'attempt'],
+    },
+  },
+  {
+    name: 'pmb_debug_echo_session',
+    description:
+      'Clone-only debug helper: echoes session_id and bound fields from Leaping Function nodes. ' +
+      'Do not wire into production Marie.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string' },
+        latest_customer_input: { type: 'string' },
+        plz: { type: 'string' },
+        hnr: { type: 'string' },
+        bday: { type: 'string' },
+      },
+      required: [],
     },
   },
   {
@@ -349,6 +370,13 @@ async function runTool(
       };
       const result = parseAddressVerificationGuardrail(input);
       logCall('pmb_address_verification_guardrail', input, result, null, Date.now() - start);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+
+    case 'pmb_debug_echo_session': {
+      const input = coerceDebugEchoSessionInput(args);
+      const result = runDebugEchoSession(input);
+      logCall('pmb_debug_echo_session', input, result, null, Date.now() - start);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
 

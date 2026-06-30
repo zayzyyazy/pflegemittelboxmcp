@@ -21,6 +21,10 @@ import {
 } from './tools/post-call-email-notifier.js';
 import { parseAddressVerificationGuardrail } from './tools/address-verification-guardrail.js';
 import {
+  coerceDebugEchoSessionInput,
+  runDebugEchoSession,
+} from './tools/debug-echo-session.js';
+import {
   coerceVerificationAddressBrainInput,
   coerceVerificationPhoneBrainInput,
   coerceVerificationVnrBrainInput,
@@ -141,6 +145,26 @@ export function createMcpServer(): McpServer {
         null,
         Date.now() - start
       );
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'pmb_debug_echo_session',
+    'Clone-only debug helper: echoes session_id and bound fields from Leaping Function nodes. ' +
+      'Do not wire into production Marie. Bind session_id = leaping_conversation_id_hex to verify stable IDs.',
+    {
+      session_id: z.string().optional(),
+      latest_customer_input: z.string().optional(),
+      plz: z.string().optional(),
+      hnr: z.string().optional(),
+      bday: z.string().optional(),
+    },
+    async (input) => {
+      const start = Date.now();
+      const coerced = coerceDebugEchoSessionInput(input);
+      const result = runDebugEchoSession(coerced);
+      logCall('pmb_debug_echo_session', coerced, result, null, Date.now() - start);
       return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
     }
   );
