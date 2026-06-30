@@ -32,6 +32,9 @@ import {
   runPostCallEmailNotifier,
 } from '../tools/post-call-email-notifier.js';
 import {
+  coerceVerificationAddressBrainInput,
+  coerceVerificationPhoneBrainInput,
+  coerceVerificationVnrBrainInput,
   runVerificationAddressBrain,
   runVerificationPhoneBrain,
   runVerificationVnrBrain,
@@ -120,6 +123,7 @@ const MCP_TOOLS = [
       type: 'object',
       properties: {
         phone_lookup_found: { type: 'boolean' },
+        latest_customer_input: { type: 'string' },
         birthday_customer: { type: 'string' },
         check_birthday_result: { type: 'string' },
         check_birthday_error: { type: 'string' },
@@ -140,6 +144,7 @@ const MCP_TOOLS = [
       type: 'object',
       properties: {
         phone_lookup_found: { type: 'boolean' },
+        latest_customer_input: { type: 'string' },
         plz: { type: 'string' },
         house_number: { type: 'string' },
         birthday_customer: { type: 'string' },
@@ -158,6 +163,7 @@ const MCP_TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
+        latest_customer_input: { type: 'string' },
         vnr_raw: { type: 'string' },
         vnr_candidate: { type: 'string' },
         vnr_confirmed: { type: 'boolean' },
@@ -347,20 +353,23 @@ async function runTool(
     }
 
     case 'pmb_verification_phone_brain': {
-      const result = runVerificationPhoneBrain(args);
-      logCall('pmb_verification_phone_brain', args, result, null, Date.now() - start);
+      const input = coerceVerificationPhoneBrainInput(args);
+      const result = runVerificationPhoneBrain(input);
+      logCall('pmb_verification_phone_brain', input, result, null, Date.now() - start);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
 
     case 'pmb_verification_address_brain': {
-      const result = runVerificationAddressBrain(args);
-      logCall('pmb_verification_address_brain', args, result, null, Date.now() - start);
+      const input = coerceVerificationAddressBrainInput(args);
+      const result = runVerificationAddressBrain(input);
+      logCall('pmb_verification_address_brain', input, result, null, Date.now() - start);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
 
     case 'pmb_verification_vnr_brain': {
-      const result = runVerificationVnrBrain(args);
-      logCall('pmb_verification_vnr_brain', args, result, null, Date.now() - start);
+      const input = coerceVerificationVnrBrainInput(args);
+      const result = runVerificationVnrBrain(input);
+      logCall('pmb_verification_vnr_brain', input, result, null, Date.now() - start);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
 

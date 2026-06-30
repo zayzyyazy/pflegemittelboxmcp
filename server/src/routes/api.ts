@@ -19,6 +19,9 @@ import {
   runPostCallEmailNotifier,
 } from '../tools/post-call-email-notifier.js';
 import {
+  coerceVerificationAddressBrainInput,
+  coerceVerificationPhoneBrainInput,
+  coerceVerificationVnrBrainInput,
   runVerificationAddressBrain,
   runVerificationPhoneBrain,
   runVerificationVnrBrain,
@@ -132,6 +135,7 @@ const TOOL_DEFS = [
       type: 'object',
       properties: {
         phone_lookup_found: { type: 'boolean' },
+        latest_customer_input: { type: 'string' },
         birthday_customer: { type: 'string' },
         check_birthday_result: { type: 'string' },
         check_birthday_error: { type: 'string' },
@@ -154,6 +158,7 @@ const TOOL_DEFS = [
       type: 'object',
       properties: {
         phone_lookup_found: { type: 'boolean' },
+        latest_customer_input: { type: 'string' },
         plz: { type: 'string' },
         house_number: { type: 'string' },
         birthday_customer: { type: 'string' },
@@ -174,6 +179,7 @@ const TOOL_DEFS = [
     inputSchema: {
       type: 'object',
       properties: {
+        latest_customer_input: { type: 'string' },
         vnr_raw: { type: 'string' },
         vnr_candidate: { type: 'string' },
         vnr_confirmed: { type: 'boolean' },
@@ -368,11 +374,17 @@ apiRouter.post('/tools/:name/test', async (req, res) => {
       }
       output = parseAddressVerificationGuardrail(guardrailInput);
     } else if (name === 'pmb_verification_phone_brain') {
-      output = runVerificationPhoneBrain(input as Record<string, unknown>);
+      output = runVerificationPhoneBrain(
+        coerceVerificationPhoneBrainInput(input as Record<string, unknown>)
+      );
     } else if (name === 'pmb_verification_address_brain') {
-      output = runVerificationAddressBrain(input as Record<string, unknown>);
+      output = runVerificationAddressBrain(
+        coerceVerificationAddressBrainInput(input as Record<string, unknown>)
+      );
     } else if (name === 'pmb_verification_vnr_brain') {
-      output = runVerificationVnrBrain(input as Record<string, unknown>);
+      output = runVerificationVnrBrain(
+        coerceVerificationVnrBrainInput(input as Record<string, unknown>)
+      );
     } else if (name === 'pmb_verification_brain') {
       output = runVerificationBrain(coerceVerificationBrainInput(input as Record<string, unknown>));
     } else if (name === 'pmb_delivery_status_reasoner') {

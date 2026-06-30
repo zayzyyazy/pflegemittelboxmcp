@@ -21,6 +21,9 @@ import {
 } from './tools/post-call-email-notifier.js';
 import { parseAddressVerificationGuardrail } from './tools/address-verification-guardrail.js';
 import {
+  coerceVerificationAddressBrainInput,
+  coerceVerificationPhoneBrainInput,
+  coerceVerificationVnrBrainInput,
   runVerificationAddressBrain,
   runVerificationPhoneBrain,
   runVerificationVnrBrain,
@@ -147,6 +150,7 @@ export function createMcpServer(): McpServer {
     'Deterministic phone verification step controller. Use only after get_customer_by_phone already found a customer.',
     {
       phone_lookup_found: z.boolean().optional(),
+      latest_customer_input: z.string().optional(),
       birthday_customer: z.string().optional(),
       check_birthday_result: z.enum(['success', 'failed', 'error', 'not_called']).optional(),
       check_birthday_error: z.string().optional(),
@@ -158,8 +162,9 @@ export function createMcpServer(): McpServer {
     },
     async (input) => {
       const start = Date.now();
-      const result = runVerificationPhoneBrain(input);
-      logCall('pmb_verification_phone_brain', input, result, null, Date.now() - start);
+      const coerced = coerceVerificationPhoneBrainInput(input);
+      const result = runVerificationPhoneBrain(coerced);
+      logCall('pmb_verification_phone_brain', coerced, result, null, Date.now() - start);
       return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
     }
   );
@@ -169,6 +174,7 @@ export function createMcpServer(): McpServer {
     'Deterministic address fallback verification step controller for PLZ + house number + birthday.',
     {
       phone_lookup_found: z.boolean().optional(),
+      latest_customer_input: z.string().optional(),
       plz: z.string().optional(),
       house_number: z.string().optional(),
       birthday_customer: z.string().optional(),
@@ -181,8 +187,9 @@ export function createMcpServer(): McpServer {
     },
     async (input) => {
       const start = Date.now();
-      const result = runVerificationAddressBrain(input);
-      logCall('pmb_verification_address_brain', input, result, null, Date.now() - start);
+      const coerced = coerceVerificationAddressBrainInput(input);
+      const result = runVerificationAddressBrain(coerced);
+      logCall('pmb_verification_address_brain', coerced, result, null, Date.now() - start);
       return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
     }
   );
@@ -191,6 +198,7 @@ export function createMcpServer(): McpServer {
     'pmb_verification_vnr_brain',
     'Deterministic VNR verification step controller that enforces the safe order: confirm VNR, format check, customer lookup, then birthday check.',
     {
+      latest_customer_input: z.string().optional(),
       vnr_raw: z.string().optional(),
       vnr_candidate: z.string().optional(),
       vnr_confirmed: z.boolean().optional(),
@@ -213,8 +221,9 @@ export function createMcpServer(): McpServer {
     },
     async (input) => {
       const start = Date.now();
-      const result = runVerificationVnrBrain(input);
-      logCall('pmb_verification_vnr_brain', input, result, null, Date.now() - start);
+      const coerced = coerceVerificationVnrBrainInput(input);
+      const result = runVerificationVnrBrain(coerced);
+      logCall('pmb_verification_vnr_brain', coerced, result, null, Date.now() - start);
       return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
     }
   );
