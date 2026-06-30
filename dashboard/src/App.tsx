@@ -6,12 +6,14 @@ import ToolsPage from './pages/ToolsPage';
 import LeapingFunctionsPage from './pages/LeapingFunctionsPage';
 import LogsPage from './pages/LogsPage';
 import SettingsPage from './pages/SettingsPage';
+import AlertsPage from './pages/AlertsPage';
 
 const PAGE_TITLES: Record<string, string> = {
   '/': 'MCP Tools',
   '/leaping': 'Leaping Functions Reference',
+  '/alerts': 'Recent Post-Call Alerts',
   '/logs': 'Call Logs',
-  '/settings': 'Settings',
+  '/settings': 'Operations',
 };
 
 export default function App() {
@@ -54,6 +56,11 @@ export default function App() {
             </NavLink>
           </li>
           <li>
+            <NavLink to="/alerts">
+              <span className="icon">🚨</span> Alerts
+            </NavLink>
+          </li>
+          <li>
             <NavLink to="/logs">
               <span className="icon">📋</span> Call Logs
             </NavLink>
@@ -93,6 +100,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<ToolsPage />} />
             <Route path="/leaping" element={<LeapingFunctionsPage />} />
+            <Route path="/alerts" element={<AlertsPage />} />
             <Route path="/logs" element={<LogsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Routes>

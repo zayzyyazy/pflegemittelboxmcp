@@ -9,7 +9,7 @@ The production deployment target is a public HTTPS endpoint on the Pflegemittelb
 | Part | Purpose |
 | --- | --- |
 | `server/` | Express + TypeScript MCP server, REST admin API, SQLite-backed logs/settings, post-call monitor |
-| `dashboard/` | Local React dashboard for testing tools, checking logs, and editing non-secret settings |
+| `dashboard/` | Internal React dashboard served by the Node server under `/ui` for testing tools, checking logs, recent alerts, and editing non-secret settings |
 | `data/` | Runtime SQLite database for tool logs, settings, and processed post-call alerts |
 
 ## Public endpoints
@@ -19,7 +19,9 @@ The production deployment target is a public HTTPS endpoint on the Pflegemittelb
 | `/health` | Health and runtime status | public |
 | `/mcp/sse` | Leaping MCP endpoint (streamable HTTP) | required |
 | `/mcp/messages` | Legacy MCP SSE message handler | required |
-| `/api/*` | Local dashboard/admin API | no MCP auth layer; keep behind your own server access controls |
+| `/api/*` | Legacy local dashboard/admin API | not for public exposure |
+| `/api/dashboard/*` | Internal dashboard API used by `/ui` | required dashboard auth |
+| `/ui` | Internal operator dashboard | required dashboard auth |
 
 ## MCP authentication
 
@@ -55,6 +57,18 @@ Leaping sends:
 ```text
 X-MCP-API-Key: YOUR_SECRET
 ```
+
+## Dashboard authentication
+
+The internal dashboard is protected separately from the MCP routes.
+
+```env
+DASHBOARD_AUTH_ENABLED=true
+DASHBOARD_AUTH_USERNAME=operator
+DASHBOARD_AUTH_PASSWORD=replace-with-a-long-random-password
+```
+
+The server refuses production startup if dashboard auth is not enabled.
 
 ## Current production tool list
 
@@ -130,6 +144,8 @@ This starts:
 - server on `http://localhost:3001`
 - dashboard on `http://localhost:5173`
 
+In production, build the dashboard and the server serves it at `/ui`.
+
 ## Production deployment
 
 Primary deployment path:
@@ -143,6 +159,15 @@ Use these files:
 
 - `server/.env.production.example`
 - `docs/DEPLOY_COMPANY_SERVER.md`
+
+### Dashboard build
+
+From `dashboard/`:
+
+```bash
+npm install
+npm run build
+```
 
 ### Production server commands
 
@@ -161,6 +186,50 @@ npm start
 cd server
 pm2 start npm --name pflegemittelbox-mcp -- start
 pm2 save
+```
+
+### Deploy from your Mac
+
+After finishing local changes, run:
+
+```bash
+./scripts/deploy-mcp.sh "Improve verification brains"
+```
+
+If you pass a commit message, the script will:
+
+- show `git status`
+- run `git add .`
+- commit and push
+- SSH to the company server
+- pull latest code
+- run `npm install`
+- run tests
+- build
+- restart PM2
+- check the public health endpoint
+
+If you run it without a commit message, it deploys only code that is already pushed:
+
+```bash
+./scripts/deploy-mcp.sh
+```
+
+### Tiny shortcut command
+
+There is also a small helper command in the repo:
+
+```bash
+./scripts/server
+```
+
+It supports:
+
+```bash
+./scripts/server ssh
+./scripts/server deploy
+./scripts/server deploy "Improve verification brains"
+./scripts/server health
 ```
 
 ## Environment variables

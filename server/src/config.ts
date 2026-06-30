@@ -12,6 +12,9 @@ const envSchema = z
     MCP_AUTH_TOKEN: z.string().trim().min(1).optional(),
     MCP_AUTH_HEADER_NAME: z.string().trim().min(1).optional(),
     MCP_AUTH_HEADER_VALUE: z.string().trim().min(1).optional(),
+    DASHBOARD_AUTH_ENABLED: z.coerce.boolean().default(false),
+    DASHBOARD_AUTH_USERNAME: z.string().trim().min(1).optional(),
+    DASHBOARD_AUTH_PASSWORD: z.string().trim().min(1).optional(),
     POST_CALL_MONITOR_ENABLED: z.coerce.boolean().default(false),
     POST_CALL_MONITOR_INTERVAL_SECONDS: z.coerce.number().int().min(30).max(3600).default(60),
     POST_CALL_MONITOR_LOOKBACK_MINUTES: z.coerce.number().int().min(1).max(1440).default(15),
@@ -40,6 +43,14 @@ const envSchema = z
         code: z.ZodIssueCode.custom,
         path: ['MCP_AUTH_ENABLED'],
         message: 'MCP_AUTH_ENABLED must be true in production.',
+      });
+    }
+
+    if (env.NODE_ENV === 'production' && env.DASHBOARD_AUTH_ENABLED !== true) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['DASHBOARD_AUTH_ENABLED'],
+        message: 'DASHBOARD_AUTH_ENABLED must be true in production.',
       });
     }
 
@@ -75,6 +86,23 @@ const envSchema = z
             message: 'MCP_AUTH_HEADER_VALUE is required when MCP_AUTH_TYPE=header.',
           });
         }
+      }
+    }
+
+    if (env.DASHBOARD_AUTH_ENABLED) {
+      if (!env.DASHBOARD_AUTH_USERNAME) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['DASHBOARD_AUTH_USERNAME'],
+          message: 'DASHBOARD_AUTH_USERNAME is required when DASHBOARD_AUTH_ENABLED=true.',
+        });
+      }
+      if (!env.DASHBOARD_AUTH_PASSWORD) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['DASHBOARD_AUTH_PASSWORD'],
+          message: 'DASHBOARD_AUTH_PASSWORD is required when DASHBOARD_AUTH_ENABLED=true.',
+        });
       }
     }
 

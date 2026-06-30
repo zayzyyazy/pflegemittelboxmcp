@@ -34,6 +34,30 @@ db.exec(`
     call_id      TEXT PRIMARY KEY,
     processed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   );
+
+  CREATE TABLE IF NOT EXISTS dashboard_test_cases (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT    NOT NULL,
+    tool_name   TEXT    NOT NULL,
+    input_json  TEXT    NOT NULL,
+    created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS post_call_alert_history (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    call_id         TEXT,
+    call_date       TEXT,
+    created_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    alert_required  INTEGER NOT NULL DEFAULT 0,
+    email_sent      INTEGER NOT NULL DEFAULT 0,
+    provider        TEXT,
+    subject         TEXT,
+    biggest_problem TEXT,
+    email_text      TEXT,
+    reason          TEXT,
+    severity        TEXT
+  );
 `);
 
 // Seed defaults only when the key does not yet exist
@@ -125,4 +149,139 @@ export function hasProcessedPostCallAlert(callId: string): boolean {
 
 export function markProcessedPostCallAlert(callId: string): void {
   insertProcessedPostCallAlert.run({ callId });
+}
+
+export interface DashboardTestCase {
+  id: number;
+  name: string;
+  tool_name: string;
+  input_json: string;
+  created_at: string;
+  updated_at: string;
+}
+
+const selectDashboardTestCases = db.prepare(`
+  SELECT *
+  FROM dashboard_test_cases
+  ORDER BY updated_at DESC, id DESC
+`);
+
+const insertDashboardTestCase = db.prepare(`
+  INSERT INTO dashboard_test_cases (name, tool_name, input_json)
+  VALUES (@name, @toolName, @inputJson)
+`);
+
+const updateDashboardTestCaseStatement = db.prepare(`
+  UPDATE dashboard_test_cases
+  SET
+    name = @name,
+    tool_name = @toolName,
+    input_json = @inputJson,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+  WHERE id = @id
+`);
+
+const deleteDashboardTestCaseStatement = db.prepare(`
+  DELETE FROM dashboard_test_cases
+  WHERE id = @id
+`);
+
+export function listDashboardTestCases(): DashboardTestCase[] {
+  return selectDashboardTestCases.all() as unknown as DashboardTestCase[];
+}
+
+export function createDashboardTestCase(name: string, toolName: string, inputJson: string): number {
+  const result = insertDashboardTestCase.run({ name, toolName, inputJson });
+  return Number(result.lastInsertRowid);
+}
+
+export function updateDashboardTestCase(
+  id: number,
+  name: string,
+  toolName: string,
+  inputJson: string
+): void {
+  updateDashboardTestCaseStatement.run({ id, name, toolName, inputJson });
+}
+
+export function deleteDashboardTestCase(id: number): void {
+  deleteDashboardTestCaseStatement.run({ id });
+}
+
+export interface PostCallAlertHistoryEntry {
+  id: number;
+  call_id: string | null;
+  call_date: string | null;
+  created_at: string;
+  alert_required: number;
+  email_sent: number;
+  provider: string | null;
+  subject: string | null;
+  biggest_problem: string | null;
+  email_text: string | null;
+  reason: string | null;
+  severity: string | null;
+}
+
+const insertPostCallAlertHistory = db.prepare(`
+  INSERT INTO post_call_alert_history (
+    call_id,
+    call_date,
+    alert_required,
+    email_sent,
+    provider,
+    subject,
+    biggest_problem,
+    email_text,
+    reason,
+    severity
+  ) VALUES (
+    @callId,
+    @callDate,
+    @alertRequired,
+    @emailSent,
+    @provider,
+    @subject,
+    @biggestProblem,
+    @emailText,
+    @reason,
+    @severity
+  )
+`);
+
+const selectRecentPostCallAlerts = db.prepare(`
+  SELECT *
+  FROM post_call_alert_history
+  ORDER BY id DESC
+  LIMIT @limit
+`);
+
+export function recordPostCallAlertHistory(entry: {
+  callId: string | null;
+  callDate: string | null;
+  alertRequired: boolean;
+  emailSent: boolean;
+  provider: string | null;
+  subject: string | null;
+  biggestProblem: string | null;
+  emailText: string | null;
+  reason: string | null;
+  severity: string | null;
+}): void {
+  insertPostCallAlertHistory.run({
+    callId: entry.callId,
+    callDate: entry.callDate,
+    alertRequired: entry.alertRequired ? 1 : 0,
+    emailSent: entry.emailSent ? 1 : 0,
+    provider: entry.provider,
+    subject: entry.subject,
+    biggestProblem: entry.biggestProblem,
+    emailText: entry.emailText,
+    reason: entry.reason,
+    severity: entry.severity,
+  });
+}
+
+export function listRecentPostCallAlerts(limit = 20): PostCallAlertHistoryEntry[] {
+  return selectRecentPostCallAlerts.all({ limit }) as unknown as PostCallAlertHistoryEntry[];
 }

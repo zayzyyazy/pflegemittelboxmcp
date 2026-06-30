@@ -2,6 +2,7 @@ import type { AppConfig } from './config.js';
 import {
   getSettings,
   hasProcessedPostCallAlert,
+  recordPostCallAlertHistory,
   markProcessedPostCallAlert,
 } from './db.js';
 import {
@@ -392,6 +393,19 @@ async function runSingleCall(
   if (!result.ok) {
     throw new Error(result.reason);
   }
+
+  recordPostCallAlertHistory({
+    callId: result.call_id,
+    callDate: result.call_date,
+    alertRequired: result.alert_required,
+    emailSent: result.email_sent,
+    provider: result.provider,
+    subject: result.subject,
+    biggestProblem: result.biggest_problem,
+    emailText: result.email_text,
+    reason: result.reason,
+    severity: null,
+  });
 
   deps.markProcessed(input.call_id);
   return result.alert_required ? 'processed_alert_sent' : 'processed_no_alert';

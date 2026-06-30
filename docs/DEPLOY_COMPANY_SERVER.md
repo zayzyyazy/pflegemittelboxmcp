@@ -8,9 +8,11 @@ This is the current recommended deployment path for Christopher / IT.
 - Public HTTPS handled by IT
 - Health endpoint: `/health`
 - Leaping MCP endpoint: `/mcp/sse`
+- Internal dashboard UI: `/ui`
 - MCP requests must authenticate
+- Dashboard requests must authenticate
 - No direct customer DB access
-- Current network model: inbound HTTPS from Leaping only
+- Current network model: inbound HTTPS from Leaping and internal operators
 - No active outbound API integrations required today
 
 The server writes its own local SQLite log/settings file under `data/`, so persistent local storage should be available.
@@ -27,6 +29,9 @@ PUBLIC_BASE_URL=https://leapingai-api.pflegemittelbox.de
 MCP_AUTH_ENABLED=true
 MCP_AUTH_TYPE=bearer
 MCP_AUTH_TOKEN=replace-with-a-long-random-secret
+DASHBOARD_AUTH_ENABLED=true
+DASHBOARD_AUTH_USERNAME=operator
+DASHBOARD_AUTH_PASSWORD=replace-with-a-long-random-password
 ```
 
 Custom-header auth is also supported:
@@ -36,7 +41,21 @@ MCP_AUTH_ENABLED=true
 MCP_AUTH_TYPE=header
 MCP_AUTH_HEADER_NAME=X-MCP-API-Key
 MCP_AUTH_HEADER_VALUE=replace-with-a-long-random-secret
+DASHBOARD_AUTH_ENABLED=true
+DASHBOARD_AUTH_USERNAME=operator
+DASHBOARD_AUTH_PASSWORD=replace-with-a-long-random-password
 ```
+
+## Dashboard build
+
+From the `dashboard/` folder:
+
+```bash
+npm install
+npm run build
+```
+
+This creates the static UI that the Node server serves from `/ui`.
 
 ## Native Node deployment
 
@@ -107,6 +126,14 @@ After deployment:
 curl https://DOMAIN/health
 ```
 
+Verify the dashboard is protected:
+
+```bash
+curl -I https://DOMAIN/ui
+```
+
+Expected: `401 Unauthorized`
+
 Verify the MCP route is protected:
 
 ```bash
@@ -132,6 +159,14 @@ https://DOMAIN/mcp/sse
 
 Click `Discover` and confirm the tools appear.
 
+Then open:
+
+```text
+https://DOMAIN/ui
+```
+
+Use the Basic Auth username/password from `DASHBOARD_AUTH_USERNAME` and `DASHBOARD_AUTH_PASSWORD`.
+
 ## Leaping authentication setup
 
 Option A - Bearer token:
@@ -150,16 +185,25 @@ Option B - Custom header:
 ## Current network note
 
 - Required now: inbound HTTPS from Leaping to the MCP server
+- Required now: inbound HTTPS from internal operators to `/ui` and `/api/dashboard/*`
 - No active outbound API integrations are required today
 - No direct DB access is required
 
 ## First deployment checklist
 
 1. Clone the repository onto the company server.
-2. Go to `server/`.
-3. Create `.env` from `server/.env.production.example`.
-4. Fill in the production domain and MCP auth secret.
-5. Run:
+2. Build the dashboard:
+
+```bash
+cd dashboard
+npm install
+npm run build
+```
+
+3. Go to `server/`.
+4. Create `.env` from `server/.env.production.example`.
+5. Fill in the production domain, MCP auth secret, and dashboard Basic Auth credentials.
+6. Run:
 
 ```bash
 npm install
@@ -167,21 +211,22 @@ npm test
 npm run build
 ```
 
-6. Start with PM2:
+7. Start with PM2:
 
 ```bash
 pm2 start npm --name pflegemittelbox-mcp -- start
 pm2 save
 ```
 
-7. Verify health:
+8. Verify health:
 
 ```bash
 curl https://leapingai-api.pflegemittelbox.de/health
 ```
 
-8. Verify unauthenticated MCP requests fail with `401`.
-9. Verify authenticated `tools/list` succeeds.
-10. In Leaping, configure `https://leapingai-api.pflegemittelbox.de/mcp/sse`.
-11. Enable matching Bearer token or custom-header authentication in Leaping.
-12. Click `Discover` and confirm the tool list appears.
+9. Verify `/ui` prompts for Basic Auth and then loads successfully.
+10. Verify unauthenticated MCP requests fail with `401`.
+11. Verify authenticated `tools/list` succeeds.
+12. In Leaping, configure `https://leapingai-api.pflegemittelbox.de/mcp/sse`.
+13. Enable matching Bearer token or custom-header authentication in Leaping.
+14. Click `Discover` and confirm the tool list appears.

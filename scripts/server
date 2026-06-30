@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DEPLOY_SCRIPT="$ROOT_DIR/scripts/deploy-mcp.sh"
+SERVER_HOST="root@167.233.203.132"
+HEALTH_URL="https://leapingai-api.pflegemittelbox.de/health"
+
+step() {
+  printf '\n==> %s\n' "$1"
+}
+
+usage() {
+  cat <<'EOF'
+Usage:
+  server                Show quick menu
+  server ssh            SSH into the company server
+  server deploy         Deploy current pushed code
+  server deploy "msg"   Commit, push, and deploy
+  server health         Check the public health endpoint
+  server help           Show this help
+EOF
+}
+
+run_menu() {
+  cat <<'EOF'
+
+Pflegemittelbox MCP server helper
+
+1) SSH into company server
+2) Deploy current pushed code
+3) Commit, push, and deploy
+4) Check public health
+5) Quit
+EOF
+
+  printf '\nChoose an option [1-5]: '
+  read -r choice
+
+  case "$choice" in
+    1) exec ssh "$SERVER_HOST" ;;
+    2) exec "$DEPLOY_SCRIPT" ;;
+    3)
+      printf 'Commit message: '
+      read -r commit_message
+      if [[ -z "${commit_message// }" ]]; then
+        printf 'No commit message provided. Cancelled.\n'
+        exit 1
+      fi
+      exec "$DEPLOY_SCRIPT" "$commit_message"
+      ;;
+    4)
+      step "Checking public health"
+      exec curl --fail --silent --show-error "$HEALTH_URL"
+      ;;
+    5) exit 0 ;;
+    *) printf 'Invalid choice.\n'; exit 1 ;;
+  esac
+}
+
+command="${1:-}"
+
+case "$command" in
+  "" )
+    run_menu
+    ;;
+  ssh)
+    exec ssh "$SERVER_HOST"
+    ;;
+  deploy)
+    shift || true
+    if [[ $# -gt 0 ]]; then
+      exec "$DEPLOY_SCRIPT" "$*"
+    fi
+    exec "$DEPLOY_SCRIPT"
+    ;;
+  health)
+    step "Checking public health"
+    exec curl --fail --silent --show-error "$HEALTH_URL"
+    ;;
+  help|-h|--help)
+    usage
+    ;;
+  *)
+    printf 'Unknown command: %s\n' "$command" >&2
+    usage >&2
+    exit 1
+    ;;
+esac

@@ -11,6 +11,12 @@ test('loadConfig accepts valid gmail email settings', () => {
   process.env.PORT = '3001';
   process.env.NODE_ENV = 'production';
   process.env.ENV_LABEL = 'render';
+  process.env.MCP_AUTH_ENABLED = 'true';
+  process.env.MCP_AUTH_TYPE = 'bearer';
+  process.env.MCP_AUTH_TOKEN = 'secret-token';
+  process.env.DASHBOARD_AUTH_ENABLED = 'true';
+  process.env.DASHBOARD_AUTH_USERNAME = 'admin';
+  process.env.DASHBOARD_AUTH_PASSWORD = 'dashboard-secret';
   process.env.ALERT_EMAIL_PROVIDER = 'gmail';
   process.env.ALERT_EMAIL_FROM = 'alerts@example.com';
   process.env.GMAIL_SMTP_USER = 'alerts@example.com';
@@ -40,6 +46,9 @@ test('loadConfig rejects production startup when MCP auth is disabled', () => {
   const previous = { ...process.env };
   process.env.NODE_ENV = 'production';
   process.env.MCP_AUTH_ENABLED = 'false';
+  process.env.DASHBOARD_AUTH_ENABLED = 'true';
+  process.env.DASHBOARD_AUTH_USERNAME = 'admin';
+  process.env.DASHBOARD_AUTH_PASSWORD = 'dashboard-secret';
 
   assert.throws(() => loadConfig(), /MCP_AUTH_ENABLED must be true in production/i);
 
@@ -52,6 +61,9 @@ test('loadConfig rejects incomplete bearer auth config', () => {
   process.env.MCP_AUTH_ENABLED = 'true';
   process.env.MCP_AUTH_TYPE = 'bearer';
   delete process.env.MCP_AUTH_TOKEN;
+  process.env.DASHBOARD_AUTH_ENABLED = 'true';
+  process.env.DASHBOARD_AUTH_USERNAME = 'admin';
+  process.env.DASHBOARD_AUTH_PASSWORD = 'dashboard-secret';
 
   assert.throws(() => loadConfig(), /MCP_AUTH_TOKEN is required/i);
 
@@ -65,8 +77,24 @@ test('loadConfig rejects incomplete header auth config', () => {
   process.env.MCP_AUTH_TYPE = 'header';
   delete process.env.MCP_AUTH_HEADER_NAME;
   delete process.env.MCP_AUTH_HEADER_VALUE;
+  process.env.DASHBOARD_AUTH_ENABLED = 'true';
+  process.env.DASHBOARD_AUTH_USERNAME = 'admin';
+  process.env.DASHBOARD_AUTH_PASSWORD = 'dashboard-secret';
 
   assert.throws(() => loadConfig(), /MCP_AUTH_HEADER_NAME is required/i);
+
+  resetEnv(previous);
+});
+
+test('loadConfig rejects production startup when dashboard auth is disabled', () => {
+  const previous = { ...process.env };
+  process.env.NODE_ENV = 'production';
+  process.env.MCP_AUTH_ENABLED = 'true';
+  process.env.MCP_AUTH_TYPE = 'bearer';
+  process.env.MCP_AUTH_TOKEN = 'secret-token';
+  process.env.DASHBOARD_AUTH_ENABLED = 'false';
+
+  assert.throws(() => loadConfig(), /DASHBOARD_AUTH_ENABLED must be true in production/i);
 
   resetEnv(previous);
 });

@@ -1,14 +1,14 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
+  base: command === 'build' ? '/ui/' : '/',
   plugins: [react()],
   server: {
     port: 5173,
     proxy: {
-      // Forward /api and /mcp to the backend server
       '/api': 'http://localhost:3001',
       '/mcp': 'http://localhost:3001',
     },
   },
-});
+}));

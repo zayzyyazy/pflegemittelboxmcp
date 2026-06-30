@@ -1,99 +1,167 @@
-import { useEffect, useState } from 'react';
-import { fetchTools, fetchLogs, testTool } from '../api';
-import type {
-  ToolDef,
-  CallLog,
-  AddressVerificationGuardrailResult,
-} from '../types';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  createDashboardTestCase,
+  deleteDashboardTestCase,
+  fetchDashboardTestCases,
+  fetchLogs,
+  fetchTools,
+  testTool,
+  updateDashboardTestCase,
+} from '../api';
+import type { CallLog, DashboardTestCase, ToolDef } from '../types';
 
-interface TestState {
-  input: Record<string, string>;
+interface ToolRunState {
+  jsonInput: string;
   running: boolean;
   result: unknown;
   error: string | null;
   duration: number | null;
+  selectedTestCaseId: number | null;
 }
 
-function emptyTest(): TestState {
-  return { input: {}, running: false, result: null, error: null, duration: null };
-}
-
-function isGuardrailResult(value: unknown): value is AddressVerificationGuardrailResult {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    'plz' in value &&
-    'house_number' in value &&
-    'birthday' in value &&
-    'missing_fields' in value &&
-    'safe_to_lookup' in value &&
-    'next_action' in value &&
-    'say_hint' in value &&
-    'confidence' in value &&
-    'reason' in value
-  );
-}
-
-function buildToolInput(toolName: string, input: Record<string, string>) {
-  if (toolName !== 'pmb_address_verification_guardrail') return input;
-
-  const nullable = (value: string | undefined) => {
-    const trimmed = value?.trim() ?? '';
-    return trimmed ? trimmed : null;
-  };
-
-  return {
-    raw_text: input.raw_text ?? '',
-    known_plz: nullable(input.known_plz),
-    known_house_number: nullable(input.known_house_number),
-    known_birthday: nullable(input.known_birthday),
-    attempt: Number(input.attempt ?? '1'),
-  };
+function buildDefaultJson(tool: ToolDef) {
+  const input: Record<string, unknown> = {};
+  for (const [field, schema] of Object.entries(tool.inputSchema.properties)) {
+    if (schema.type === 'number') input[field] = 1;
+    else if (schema.type === 'boolean') input[field] = false;
+    else input[field] = '';
+  }
+  return JSON.stringify(input, null, 2);
 }
 
 export default function ToolsPage() {
   const [tools, setTools] = useState<ToolDef[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [logs, setLogs] = useState<CallLog[]>([]);
+  const [testCases, setTestCases] = useState<DashboardTestCase[]>([]);
+  const [states, setStates] = useState<Record<string, ToolRunState>>({});
   const [openTool, setOpenTool] = useState<string | null>(null);
-  const [testStates, setTestStates] = useState<Record<string, TestState>>({});
-  const [recentLogs, setRecentLogs] = useState<CallLog[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchTools()
-      .then((r) => {
-        setTools(r.tools);
-        const initial: Record<string, TestState> = {};
-        for (const t of r.tools) initial[t.name] = emptyTest();
-        setTestStates(initial);
+    Promise.all([fetchTools(), fetchLogs(20), fetchDashboardTestCases()])
+      .then(([toolResponse, logResponse, testCaseResponse]) => {
+        setTools(toolResponse.tools);
+        setLogs(logResponse.logs);
+        setTestCases(testCaseResponse.test_cases);
+
+        const nextStates: Record<string, ToolRunState> = {};
+        for (const tool of toolResponse.tools) {
+          nextStates[tool.name] = {
+            jsonInput: buildDefaultJson(tool),
+            running: false,
+            result: null,
+            error: null,
+            duration: null,
+            selectedTestCaseId: null,
+          };
+        }
+        setStates(nextStates);
       })
       .finally(() => setLoading(false));
-
-    fetchLogs(20).then((r) => setRecentLogs(r.logs));
   }, []);
 
-  function setInput(toolName: string, field: string, value: string) {
-    setTestStates((prev) => ({
-      ...prev,
-      [toolName]: { ...prev[toolName], input: { ...prev[toolName].input, [field]: value } },
-    }));
+  const testCasesByTool = useMemo(() => {
+    const grouped: Record<string, DashboardTestCase[]> = {};
+    for (const testCase of testCases) {
+      if (!grouped[testCase.tool_name]) grouped[testCase.tool_name] = [];
+      grouped[testCase.tool_name].push(testCase);
+    }
+    return grouped;
+  }, [testCases]);
+
+  function setToolState(toolName: string, partial: Partial<ToolRunState>) {
+    setStates((prev) => ({ ...prev, [toolName]: { ...prev[toolName], ...partial } }));
   }
 
-  async function runTest(tool: ToolDef) {
-    setTestStates((prev) => ({ ...prev, [tool.name]: { ...prev[tool.name], running: true, result: null, error: null, duration: null } }));
+  async function refreshLogs() {
+    const response = await fetchLogs(20);
+    setLogs(response.logs);
+  }
+
+  async function refreshTestCases() {
+    const response = await fetchDashboardTestCases();
+    setTestCases(response.test_cases);
+  }
+
+  async function handleRun(tool: ToolDef) {
+    const current = states[tool.name];
+    setToolState(tool.name, { running: true, error: null, result: null, duration: null });
+
     try {
-      const res = await testTool(tool.name, buildToolInput(tool.name, testStates[tool.name].input));
-      setTestStates((prev) => ({
-        ...prev,
-        [tool.name]: { ...prev[tool.name], running: false, result: res.output, error: null, duration: res.duration_ms },
-      }));
-      // Refresh recent logs
-      fetchLogs(20).then((r) => setRecentLogs(r.logs));
-    } catch (e) {
-      setTestStates((prev) => ({
-        ...prev,
-        [tool.name]: { ...prev[tool.name], running: false, error: String(e), duration: null },
-      }));
+      const parsed = current.jsonInput.trim() ? JSON.parse(current.jsonInput) : {};
+      const response = await testTool(tool.name, parsed);
+      setToolState(tool.name, {
+        running: false,
+        result: response.output,
+        duration: response.duration_ms,
+        error: null,
+      });
+      await refreshLogs();
+    } catch (error) {
+      setToolState(tool.name, {
+        running: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
+  }
+
+  async function handleSave(tool: ToolDef) {
+    const current = states[tool.name];
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = current.jsonInput.trim() ? JSON.parse(current.jsonInput) : {};
+    } catch {
+      setToolState(tool.name, { error: 'Input JSON is invalid.' });
+      return;
+    }
+
+    const existing = current.selectedTestCaseId
+      ? testCases.find((entry) => entry.id === current.selectedTestCaseId)
+      : null;
+    const proposedName = window.prompt(
+      'Test case name',
+      existing?.name ?? `${tool.name} test`
+    );
+    if (!proposedName?.trim()) return;
+
+    if (existing) {
+      await updateDashboardTestCase(existing.id, {
+        name: proposedName.trim(),
+        tool_name: tool.name,
+        input: parsed,
+      });
+    } else {
+      const response = await createDashboardTestCase({
+        name: proposedName.trim(),
+        tool_name: tool.name,
+        input: parsed,
+      });
+      if (response.test_case) {
+        setToolState(tool.name, { selectedTestCaseId: response.test_case.id });
+      }
+    }
+    await refreshTestCases();
+  }
+
+  async function handleDeleteSaved(tool: ToolDef) {
+    const current = states[tool.name];
+    if (!current.selectedTestCaseId) return;
+    if (!window.confirm('Delete this saved test case?')) return;
+    await deleteDashboardTestCase(current.selectedTestCaseId);
+    setToolState(tool.name, { selectedTestCaseId: null });
+    await refreshTestCases();
+  }
+
+  function handleLoadSaved(toolName: string, testCaseId: number) {
+    const testCase = testCases.find((entry) => entry.id === testCaseId);
+    if (!testCase) return;
+    setToolState(toolName, {
+      selectedTestCaseId: testCase.id,
+      jsonInput: JSON.stringify(testCase.input, null, 2),
+      result: null,
+      error: null,
+      duration: null,
+    });
   }
 
   if (loading) return <div className="empty-state"><span className="spinner" /></div>;
@@ -102,13 +170,13 @@ export default function ToolsPage() {
     <>
       <p className="page-title">MCP Tools</p>
       <p className="page-sub">
-        These tools are exposed via the MCP server. Use the test forms below to call them and inspect results.
+        Test each MCP tool with raw JSON input, inspect returned JSON, and save reusable operator test cases.
       </p>
 
       {tools.map((tool) => {
-        const ts = testStates[tool.name] ?? emptyTest();
+        const state = states[tool.name];
+        const savedCases = testCasesByTool[tool.name] ?? [];
         const isOpen = openTool === tool.name;
-        const hasFields = tool.inputSchema.required.length > 0;
 
         return (
           <div className="card" key={tool.name}>
@@ -122,7 +190,7 @@ export default function ToolsPage() {
                 className={`btn btn-sm ${isOpen ? 'btn-ghost' : 'btn-primary'}`}
                 onClick={() => setOpenTool(isOpen ? null : tool.name)}
               >
-                {isOpen ? 'Close' : '▶ Test'}
+                {isOpen ? 'Close' : 'Open'}
               </button>
             </div>
 
@@ -130,106 +198,114 @@ export default function ToolsPage() {
               <p style={{ color: 'var(--text-muted)', fontSize: '13px', marginBottom: 8 }}>
                 {tool.description}
               </p>
-
               <div className="schema-block">
                 <strong style={{ color: 'var(--text-label)' }}>Input schema</strong>
                 <br />
-                {Object.entries(tool.inputSchema.properties).length === 0
+                {Object.keys(tool.inputSchema.properties).length === 0
                   ? '(no input required)'
-                  : Object.entries(tool.inputSchema.properties).map(([k, v]) => (
-                      <div key={k}>
-                        <span style={{ color: '#6baed6' }}>{k}</span>:{' '}
-                        <span style={{ color: '#74c476' }}>{v.type}</span>
-                        {v.description && (
-                          <span style={{ color: '#969696' }}> — {v.description}</span>
-                        )}
+                  : Object.entries(tool.inputSchema.properties).map(([name, schema]) => (
+                      <div key={name}>
+                        <span style={{ color: '#6baed6' }}>{name}</span>:{' '}
+                        <span style={{ color: '#74c476' }}>{schema.type}</span>
+                        {schema.description ? (
+                          <span style={{ color: '#969696' }}> — {schema.description}</span>
+                        ) : null}
                       </div>
                     ))}
               </div>
             </div>
 
-            {/* ── Test panel ───────────────────────────────────── */}
-            {isOpen && (
+            {isOpen ? (
               <div className="test-panel">
-                {hasFields &&
-                  Object.entries(tool.inputSchema.properties).map(([field, schema]) => (
-                    <div className="field" key={field}>
-                      <label>{field} <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>({schema.type})</span></label>
-                      <textarea
-                        rows={2}
-                        placeholder={schema.description ?? `Enter ${field}...`}
-                        value={ts.input[field] ?? ''}
-                        onChange={(e) => setInput(tool.name, field, e.target.value)}
-                      />
-                      {tool.name === 'normalize_vnr' && field === 'text' && (
-                        <div className="field-hint">
-                          Example: <code>L wie Ludwig null drei neun drei fünf neun neun zwei drei</code>
-                        </div>
-                      )}
-                      {tool.name === 'pmb_address_verification_guardrail' && field === 'raw_text' && (
-                        <div className="field-hint">
-                          Example: <code>22765, Hausnummer 14, geboren am dritten fünften achtundvierzig</code>
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                <div className="field">
+                  <label>Saved test cases</label>
+                  <div className="gap-2" style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <select
+                      value={state.selectedTestCaseId ?? ''}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        if (!value) {
+                          setToolState(tool.name, { selectedTestCaseId: null });
+                          return;
+                        }
+                        handleLoadSaved(tool.name, Number(value));
+                      }}
+                    >
+                      <option value="">Select saved case…</option>
+                      {savedCases.map((testCase) => (
+                        <option key={testCase.id} value={testCase.id}>
+                          {testCase.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button className="btn btn-sm btn-ghost" onClick={() => void handleSave(tool)}>
+                      Save current
+                    </button>
+                    <button
+                      className="btn btn-sm btn-danger"
+                      disabled={!state.selectedTestCaseId}
+                      onClick={() => void handleDeleteSaved(tool)}
+                    >
+                      Delete saved
+                    </button>
+                  </div>
+                </div>
 
-                <button
-                  className="btn btn-primary"
-                  disabled={ts.running}
-                  onClick={() => runTest(tool)}
-                >
-                  {ts.running ? <><span className="spinner" style={{ width: 14, height: 14 }} /> Running…</> : '▶ Run Tool'}
-                </button>
+                <div className="field">
+                  <label>Manual JSON input</label>
+                  <textarea
+                    rows={14}
+                    value={state.jsonInput}
+                    onChange={(event) => setToolState(tool.name, { jsonInput: event.target.value })}
+                    placeholder='{"example": "value"}'
+                    style={{ fontFamily: 'var(--mono)' }}
+                  />
+                </div>
 
-                {(ts.result !== null || ts.error) && (
+                <div className="gap-2" style={{ display: 'flex', flexWrap: 'wrap' }}>
+                  <button
+                    className="btn btn-primary"
+                    disabled={state.running}
+                    onClick={() => void handleRun(tool)}
+                  >
+                    {state.running ? 'Running…' : 'Run tool'}
+                  </button>
+                  <button
+                    className="btn btn-ghost"
+                    onClick={() => setToolState(tool.name, { jsonInput: buildDefaultJson(tool), result: null, error: null, duration: null })}
+                  >
+                    Reset input
+                  </button>
+                </div>
+
+                {(state.result !== null || state.error) ? (
                   <div className="test-result">
                     <h4>
                       Result
-                      {ts.duration !== null && (
+                      {state.duration !== null ? (
                         <span style={{ color: 'var(--text-muted)', marginLeft: 8, fontWeight: 400 }}>
-                          {ts.duration}ms
+                          {state.duration}ms
                         </span>
-                      )}
+                      ) : null}
                     </h4>
-                    {tool.name === 'pmb_address_verification_guardrail' &&
-                      !ts.error &&
-                      isGuardrailResult(ts.result) && (
-                        <div className="schema-block" style={{ marginBottom: 12 }}>
-                          <strong style={{ color: 'var(--text-label)' }}>Parsed summary</strong>
-                          <div>raw input: <span style={{ color: 'var(--text-muted)' }}>{ts.input.raw_text || '—'}</span></div>
-                          <div>parsed PLZ: <span style={{ color: '#6baed6' }}>{ts.result.plz ?? 'null'}</span></div>
-                          <div>parsed house number: <span style={{ color: '#6baed6' }}>{ts.result.house_number ?? 'null'}</span></div>
-                          <div>parsed birthday: <span style={{ color: '#6baed6' }}>{ts.result.birthday ?? 'null'}</span></div>
-                          <div>missing fields: <span style={{ color: '#74c476' }}>{ts.result.missing_fields.length ? ts.result.missing_fields.join(', ') : 'none'}</span></div>
-                          <div>safe_to_lookup: <span style={{ color: ts.result.safe_to_lookup ? '#74c476' : '#fdae6b' }}>{String(ts.result.safe_to_lookup)}</span></div>
-                          <div>next_action: <span style={{ color: '#6baed6' }}>{ts.result.next_action}</span></div>
-                          <div>say_hint: <span style={{ color: 'var(--text-muted)' }}>{ts.result.say_hint}</span></div>
-                          <div>confidence: <span style={{ color: '#74c476' }}>{ts.result.confidence}</span></div>
-                          <div>reason: <span style={{ color: 'var(--text-muted)' }}>{ts.result.reason}</span></div>
-                        </div>
-                      )}
-                    <pre className={`json-block ${ts.error ? 'error' : ''}`}>
-                      {ts.error
-                        ? `Error: ${ts.error}`
-                        : JSON.stringify(ts.result, null, 2)}
+                    <pre className={`json-block ${state.error ? 'error' : ''}`}>
+                      {state.error ? `Error: ${state.error}` : JSON.stringify(state.result, null, 2)}
                     </pre>
                   </div>
-                )}
+                ) : null}
               </div>
-            )}
+            ) : null}
           </div>
         );
       })}
 
-      {/* ── Recent call history ──────────────────────────────────── */}
       <div className="card" style={{ marginTop: 8 }}>
         <div className="card-header">
           <h3>Recent Test History</h3>
-          <span className="badge badge-info">{recentLogs.length} calls</span>
+          <span className="badge badge-info">{logs.length} calls</span>
         </div>
         <div className="table-wrap">
-          {recentLogs.length === 0 ? (
+          {logs.length === 0 ? (
             <div className="empty-state">No tool calls yet. Run a test above.</div>
           ) : (
             <table>
@@ -243,12 +319,10 @@ export default function ToolsPage() {
                 </tr>
               </thead>
               <tbody>
-                {recentLogs.map((log) => (
+                {logs.map((log) => (
                   <tr key={log.id}>
                     <td className="ts">{new Date(log.timestamp).toLocaleTimeString()}</td>
-                    <td>
-                      <span style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>{log.tool_name}</span>
-                    </td>
+                    <td><span style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>{log.tool_name}</span></td>
                     <td className="log-input" title={log.input ?? ''}>{log.input ?? '—'}</td>
                     <td className={log.error ? 'log-error' : 'log-output'} title={log.output ?? log.error ?? ''}>
                       {log.error ? `ERR: ${log.error}` : (log.output ?? '—')}

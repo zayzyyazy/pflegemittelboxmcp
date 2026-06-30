@@ -61,8 +61,12 @@ export interface ServerStatus {
   service: string;
   version: string;
   env: string;
+  node_env?: string;
   tool_count: number;
   uptime_s: number;
+  tools?: string[];
+  mcp_auth_enabled?: boolean;
+  dashboard_auth_enabled?: boolean;
 }
 
 export interface PostCallMonitorStatus {
@@ -85,4 +89,43 @@ export interface PostCallMonitorStatus {
     started_at: string;
     finished_at: string;
   } | null;
+}
+
+export type PostCallMonitorRunSummary = NonNullable<PostCallMonitorStatus['last_summary']>;
+
+export interface DashboardTestCase {
+  id: number;
+  name: string;
+  tool_name: string;
+  input: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PostCallAlertHistoryEntry {
+  id: number;
+  call_id: string | null;
+  call_date: string | null;
+  created_at: string;
+  alert_required: number;
+  email_sent: number;
+  provider: string | null;
+  subject: string | null;
+  biggest_problem: string | null;
+  email_text: string | null;
+  reason: string | null;
+  severity: string | null;
+}
+
+export interface ServerRuntime {
+  node_version: string;
+  pid: number;
+  platform: string;
+  uptime_s: number;
+  cwd: string;
+  pm2: {
+    available: boolean;
+    process: unknown;
+    error: string | null;
+  };
 }

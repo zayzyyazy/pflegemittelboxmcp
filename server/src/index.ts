@@ -1,16 +1,24 @@
 import express from 'express';
 import cors from 'cors';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { mcpRouter } from './routes/mcp-http.js';
 import { apiRouter } from './routes/api.js';
+import { dashboardApiRouter } from './routes/dashboard-api.js';
 import { setSetting } from './db.js';
 import { appConfig } from './config.js';
 import { getPostCallMonitorState, startPostCallMonitor } from './post-call-monitor.js';
 import { createMcpAuthMiddleware } from './mcp-auth.js';
+import { createDashboardAuthMiddleware } from './dashboard-auth.js';
 
 const app = express();
 const startedAt = new Date().toISOString();
 let shuttingDown = false;
 const postCallMonitor = startPostCallMonitor(appConfig);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const dashboardDistDir = path.join(__dirname, '../../dashboard/dist');
+const dashboardIndexFile = path.join(dashboardDistDir, 'index.html');
 
 // Sync ENV_LABEL env var → settings table on each startup
 if (appConfig.ENV_LABEL) {
@@ -24,6 +32,7 @@ if (appConfig.NODE_ENV === 'production') {
 app.use(cors({ origin: true }));
 
 const mcpAuthMiddleware = createMcpAuthMiddleware(appConfig);
+const dashboardAuthMiddleware = createDashboardAuthMiddleware(appConfig);
 
 // ── MCP routes ────────────────────────────────────────────────────────────
 // POST /mcp/sse applies express.json() inline (Streamable HTTP, what Leaping uses).
@@ -32,6 +41,7 @@ app.use('/mcp', mcpAuthMiddleware, mcpRouter);
 
 // ── Dashboard REST API (JSON body parser applies only here) ──────────────
 app.use('/api', express.json(), apiRouter);
+app.use('/api/dashboard', dashboardAuthMiddleware, express.json(), dashboardApiRouter);
 
 app.get('/health', (_req, res) => {
   res.json({
@@ -63,6 +73,31 @@ app.get('/', (_req, res) => {
   });
 });
 
+if (fs.existsSync(dashboardIndexFile)) {
+  app.use(
+    '/ui',
+    dashboardAuthMiddleware,
+    express.static(dashboardDistDir, {
+      index: false,
+    })
+  );
+
+  app.get('/ui', dashboardAuthMiddleware, (_req, res) => {
+    res.sendFile(dashboardIndexFile);
+  });
+
+  app.get('/ui/*', dashboardAuthMiddleware, (_req, res) => {
+    res.sendFile(dashboardIndexFile);
+  });
+} else {
+  app.get('/ui', dashboardAuthMiddleware, (_req, res) => {
+    res.status(503).json({
+      ok: false,
+      error: 'Dashboard build not found. Run the dashboard build before using /ui.',
+    });
+  });
+}
+
 const server = app.listen(appConfig.PORT, () => {
   const publicBaseUrl =
     appConfig.PUBLIC_BASE_URL ?? `http://0.0.0.0:${appConfig.PORT}`;
@@ -79,11 +114,14 @@ const server = app.listen(appConfig.PORT, () => {
     endpoints: {
       health: `${publicBaseUrl}/health`,
       api: `${publicBaseUrl}/api`,
+      dashboard_api: `${publicBaseUrl}/api/dashboard`,
+      dashboard_ui: `${publicBaseUrl}/ui`,
       mcp_sse: `${publicBaseUrl}/mcp/sse`,
       mcp_messages: `${publicBaseUrl}/mcp/messages`,
     },
     mcp_auth_enabled: appConfig.MCP_AUTH_ENABLED,
     mcp_auth_type: appConfig.MCP_AUTH_ENABLED ? appConfig.MCP_AUTH_TYPE : 'none',
+    dashboard_auth_enabled: appConfig.DASHBOARD_AUTH_ENABLED,
     post_call_monitor_enabled: appConfig.POST_CALL_MONITOR_ENABLED,
   }, null, 2));
 });
