@@ -47,6 +47,9 @@ export interface VerificationVnrBrainInput {
   office_hours?: boolean;
 }
 
+export type AddressAwaitingField = 'plz' | 'house_number' | 'birthday_customer' | 'confirm_address';
+export type VerificationActionType = 'SAY_ONLY' | 'CALL_FUNCTION' | 'TRANSITION' | 'ERROR';
+
 export interface VerificationMethodBrainResult {
   ok: boolean;
   method: 'phone' | 'address' | 'vnr';
@@ -66,6 +69,15 @@ export interface VerificationMethodBrainResult {
   attempts?: VerificationSessionAttempts;
   stored_values?: VerificationSessionStoredValues;
   function_arguments?: Record<string, string>;
+  leaping_function_arguments?: Record<string, string>;
+  action_type?: VerificationActionType;
+  active_brain?: 'phone' | 'address' | 'vnr';
+  function_name?: string | null;
+  transition_name?: 'weiter' | 'nicht_identifiziert' | null;
+  requires_followup_mcp_call?: boolean;
+  awaiting_field?: AddressAwaitingField | null;
+  expected_field?: AddressAwaitingField | null;
+  known_values_required_next_call?: Record<string, string>;
 }
 
 export interface VerificationSessionAttempts {
@@ -96,6 +108,7 @@ export interface VerificationSessionStoredValues {
 interface VerificationSessionState extends VerificationSessionStoredValues {
   pending_birthday_day: number | null;
   pending_birthday_month: number | null;
+  awaiting_field: AddressAwaitingField | null;
   attempts: VerificationSessionAttempts;
 }
 
@@ -243,6 +256,7 @@ function emptySessionState(): VerificationSessionState {
     check_insurance_number_format_result: null,
     pending_birthday_day: null,
     pending_birthday_month: null,
+    awaiting_field: null,
     attempts: emptyAttempts(),
   };
 }
@@ -647,6 +661,166 @@ function parseHouseNumber(rawText: string | undefined): string | undefined {
   return undefined;
 }
 
+function utteranceContainsValidPlz(rawText: string | undefined): string | undefined {
+  if (!rawText) return undefined;
+  const plz = parsePlz(rawText);
+  return plz && /^\d{5}$/.test(plz) ? plz : undefined;
+}
+
+function parseHouseNumberFromUtterance(rawText: string | undefined): string | undefined {
+  if (!rawText) return undefined;
+  if (utteranceContainsValidPlz(rawText)) return undefined;
+  return parseHouseNumber(rawText);
+}
+
+function resolveAddressAwaitingField(args: {
+  plz?: string;
+  house_number?: string;
+  birthday_customer?: string;
+  get_customer_by_plz_geb_result?: VerificationAddressBrainInput['get_customer_by_plz_geb_result'];
+  address_lookup_attempts?: number;
+  sessionAwaiting?: AddressAwaitingField | null;
+}): AddressAwaitingField {
+  if (
+    args.get_customer_by_plz_geb_result === 'not_found' &&
+    (args.address_lookup_attempts ?? 0) >= 1 &&
+    args.plz &&
+    args.house_number &&
+    args.birthday_customer
+  ) {
+    return 'confirm_address';
+  }
+  if (args.sessionAwaiting === 'confirm_address') return 'confirm_address';
+  if (!args.plz) return 'plz';
+  if (!args.house_number) return 'house_number';
+  if (!args.birthday_customer) return 'birthday_customer';
+  return 'confirm_address';
+}
+
+function parseAddressFieldFromUtterance(
+  awaitingField: AddressAwaitingField,
+  rawText: string | undefined,
+  existingBirthday?: string,
+  pendingDay?: number | null,
+  pendingMonth?: number | null
+): {
+  plz?: string;
+  house_number?: string;
+  birthdayMerge?: ReturnType<typeof mergeBirthday>;
+} {
+  if (!rawText) return {};
+
+  if (awaitingField === 'plz') {
+    const plz = parsePlz(rawText);
+    return plz && /^\d{5}$/.test(plz) ? { plz } : {};
+  }
+
+  if (awaitingField === 'house_number') {
+    const house_number = parseHouseNumberFromUtterance(rawText);
+    return house_number ? { house_number } : {};
+  }
+
+  if (awaitingField === 'birthday_customer') {
+    return { birthdayMerge: mergeBirthday(existingBirthday, rawText, pendingDay, pendingMonth) };
+  }
+
+  return {};
+}
+
+function buildPlzGebFunctionArgs(plz: string, house_number: string, birthday_customer: string) {
+  const hnr = house_number;
+  const bday = birthday_customer;
+  return {
+    function_arguments: { plz, hnr, bday },
+    leaping_function_arguments: { plz, hnr, bday, house_number, birthday: birthday_customer },
+  };
+}
+
+function computeActionType(nextAction: string, ok: boolean): VerificationActionType {
+  if (nextAction.startsWith('CALL_')) return 'CALL_FUNCTION';
+  if (nextAction.startsWith('TRANSITION_')) return 'TRANSITION';
+  if (nextAction === 'TECHNICAL_ESCALATION' || nextAction === 'WRONG_METHOD') {
+    return 'ERROR';
+  }
+  return 'SAY_ONLY';
+}
+
+function requiresFollowupMcpCall(nextAction: string, actionType: VerificationActionType): boolean {
+  if (actionType === 'TRANSITION') return false;
+  if (nextAction === 'TECHNICAL_ESCALATION' || nextAction === 'WRONG_METHOD' || nextAction === 'TRANSFER_HUMAN') {
+    return false;
+  }
+  return true;
+}
+
+function buildKnownValuesRequiredNextCall(
+  sessionId: string | undefined,
+  values: {
+    plz?: string;
+    house_number?: string;
+    birthday_customer?: string;
+    get_customer_by_plz_geb_result?: string;
+    address_lookup_attempts?: number;
+    phone_lookup_found?: boolean;
+  }
+): Record<string, string> {
+  if (sessionId) return {};
+  const known: Record<string, string> = {};
+  if (values.plz) known.plz = values.plz;
+  if (values.house_number) known.house_number = values.house_number;
+  if (values.birthday_customer) known.birthday_customer = values.birthday_customer;
+  if (values.get_customer_by_plz_geb_result && values.get_customer_by_plz_geb_result !== 'not_called') {
+    known.get_customer_by_plz_geb_result = values.get_customer_by_plz_geb_result;
+  }
+  if (values.address_lookup_attempts !== undefined && values.address_lookup_attempts > 0) {
+    known.address_lookup_attempts = String(values.address_lookup_attempts);
+  }
+  if (values.phone_lookup_found !== undefined) {
+    known.phone_lookup_found = String(values.phone_lookup_found);
+  }
+  return known;
+}
+
+function storedValuesFromAddressInput(input: VerificationAddressBrainInput): VerificationSessionStoredValues {
+  return {
+    active_verification_path: 'address',
+    phone_lookup_found: input.phone_lookup_found ?? null,
+    plz: input.plz ?? null,
+    house_number: input.house_number ?? null,
+    birthday_customer: input.birthday_customer ?? null,
+    vnr_candidate: null,
+    vnr_confirmed: null,
+    check_birthday_result: null,
+    check_birthday_error: null,
+    get_customer_by_plz_geb_result: input.get_customer_by_plz_geb_result ?? null,
+    get_customer_by_insurance_number_result: null,
+    check_insurance_number_format_result: null,
+  };
+}
+
+function enrichBrainResult(
+  result: VerificationMethodBrainResult,
+  extras?: {
+    awaiting_field?: AddressAwaitingField | null;
+    known_values_required_next_call?: Record<string, string>;
+    leaping_function_arguments?: Record<string, string>;
+  }
+): VerificationMethodBrainResult {
+  const action_type = computeActionType(result.next_action, result.ok);
+  return {
+    ...result,
+    action_type,
+    active_brain: result.method,
+    function_name: result.function_to_call,
+    transition_name: result.transition_to,
+    requires_followup_mcp_call: requiresFollowupMcpCall(result.next_action, action_type),
+    awaiting_field: extras?.awaiting_field ?? result.awaiting_field ?? null,
+    expected_field: extras?.awaiting_field ?? result.expected_field ?? result.awaiting_field ?? null,
+    known_values_required_next_call: extras?.known_values_required_next_call ?? result.known_values_required_next_call,
+    leaping_function_arguments: extras?.leaping_function_arguments ?? result.leaping_function_arguments,
+  };
+}
+
 function mergeBirthday(
   existing: string | undefined,
   latestText: string | undefined,
@@ -683,6 +857,9 @@ function makeResult(
     function_to_call?: string | null;
     transition_to?: 'weiter' | 'nicht_identifiziert' | null;
     function_arguments?: Record<string, string>;
+    leaping_function_arguments?: Record<string, string>;
+    awaiting_field?: AddressAwaitingField | null;
+    known_values_required_next_call?: Record<string, string>;
   }
 ): VerificationMethodBrainResult {
   const function_to_call = patch.function_to_call ?? null;
@@ -706,7 +883,50 @@ function makeResult(
     attempts: patch.attempts,
     stored_values: patch.stored_values,
     function_arguments: patch.function_arguments,
+    leaping_function_arguments: patch.leaping_function_arguments,
+    awaiting_field: patch.awaiting_field,
+    expected_field: patch.awaiting_field,
+    known_values_required_next_call: patch.known_values_required_next_call,
   };
+}
+
+interface AddressBrainFinalizeContext {
+  sessionId?: string;
+  state: VerificationSessionState | null;
+  awaiting_field: AddressAwaitingField | null;
+  addressInput: VerificationAddressBrainInput;
+}
+
+function finalizeAddressBrainResult(
+  result: VerificationMethodBrainResult,
+  context: AddressBrainFinalizeContext
+): VerificationMethodBrainResult {
+  if (context.state) {
+    context.state.awaiting_field = context.awaiting_field;
+  }
+  const knownValues = buildKnownValuesRequiredNextCall(context.sessionId, {
+    plz: context.addressInput.plz,
+    house_number: context.addressInput.house_number,
+    birthday_customer: context.addressInput.birthday_customer,
+    get_customer_by_plz_geb_result: context.addressInput.get_customer_by_plz_geb_result,
+    address_lookup_attempts: context.addressInput.address_lookup_attempts,
+    phone_lookup_found: context.addressInput.phone_lookup_found,
+  });
+  const withSession = attachSessionDebug(
+    {
+      ...result,
+      stored_values: result.stored_values ?? storedValuesFromAddressInput(context.addressInput),
+      known_values_required_next_call: knownValues,
+      awaiting_field: context.awaiting_field,
+    },
+    context.sessionId,
+    context.state
+  );
+  return enrichBrainResult(withSession, {
+    awaiting_field: context.awaiting_field,
+    known_values_required_next_call: knownValues,
+    leaping_function_arguments: result.leaping_function_arguments,
+  });
 }
 
 function attachSessionDebug(
@@ -714,7 +934,9 @@ function attachSessionDebug(
   sessionId: string | undefined,
   state: VerificationSessionState | null
 ): VerificationMethodBrainResult {
-  if (!sessionId || !state) return attachStatelessDebug(result, result.method);
+  if (!sessionId || !state) {
+    return attachStatelessDebug(result, result.method, result.stored_values ?? undefined);
+  }
   saveSessionState(sessionId, state);
   return {
     ...result,
@@ -737,12 +959,15 @@ function attachSessionDebug(
       get_customer_by_insurance_number_result: state.get_customer_by_insurance_number_result,
       check_insurance_number_format_result: state.check_insurance_number_format_result,
     },
+    awaiting_field: state.awaiting_field ?? result.awaiting_field ?? null,
+    expected_field: state.awaiting_field ?? result.expected_field ?? null,
   };
 }
 
 function attachStatelessDebug(
   result: VerificationMethodBrainResult,
-  method: 'phone' | 'address' | 'vnr'
+  method: 'phone' | 'address' | 'vnr',
+  currentStoredValues?: VerificationSessionStoredValues
 ): VerificationMethodBrainResult {
   const safetyFlags = result.safety_flags.includes('missing_session_id')
     ? result.safety_flags
@@ -755,6 +980,7 @@ function attachStatelessDebug(
     state_summary: 'No session_id received, values will not persist across turns.',
     attempts: result.attempts ?? emptyAttempts(),
     stored_values:
+      currentStoredValues ??
       result.stored_values ?? {
         active_verification_path: method,
         phone_lookup_found: null,
@@ -774,6 +1000,14 @@ function attachStatelessDebug(
       ? result.reason
       : `${result.reason} No session_id received, values will not persist across turns.`,
   };
+}
+
+function finalizeGenericBrainResult(
+  result: VerificationMethodBrainResult,
+  sessionId: string | undefined,
+  state: VerificationSessionState | null
+): VerificationMethodBrainResult {
+  return enrichBrainResult(attachSessionDebug(result, sessionId, state));
 }
 
 function maybeTransferHuman(method: 'phone' | 'address' | 'vnr', requested?: boolean, officeHours?: boolean) {
@@ -892,11 +1126,11 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
   const transfer = maybeTransferHuman('phone', input.customer_requested_human, input.office_hours);
   if (transfer) {
     saveSessionState(rawInput.session_id, session ?? emptySessionState());
-    return attachSessionDebug(transfer, rawInput.session_id, session);
+    return finalizeGenericBrainResult(transfer, rawInput.session_id, session);
   }
 
   if (input.phone_lookup_found !== true) {
-    return attachSessionDebug(makeResult('phone', {
+    return finalizeGenericBrainResult(makeResult('phone', {
       ok: false,
       next_action: 'WRONG_METHOD',
       say: '',
@@ -907,7 +1141,7 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
   }
 
   if (isMissingBirthdaySystem(input.check_birthday_error)) {
-    return attachSessionDebug(makeResult('phone', {
+    return finalizeGenericBrainResult(makeResult('phone', {
       ok: false,
       next_action: 'TECHNICAL_ESCALATION',
       say: 'Es gibt gerade ein technisches Problem bei der Verifizierung. Ich gebe das intern weiter.',
@@ -927,11 +1161,11 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
       safety_flags: [],
     });
     saveSessionState(rawInput.session_id, session ?? emptySessionState());
-    return attachSessionDebug(result, rawInput.session_id, session);
+    return finalizeGenericBrainResult(result, rawInput.session_id, session);
   }
 
   if (birthdayMerge.parse.status === 'impossible') {
-    return attachSessionDebug(makeResult('phone', {
+    return finalizeGenericBrainResult(makeResult('phone', {
       ok: false,
       next_action: 'ASK_BIRTHDAY',
       say: 'Das Geburtsdatum konnte ich so nicht verarbeiten. Bitte nennen Sie es noch einmal vollständig.',
@@ -943,7 +1177,7 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
 
   if (!input.birthday_customer) {
     if ((input.birthday_request_count ?? 0) >= 2) {
-      return attachSessionDebug(makeResult('phone', {
+      return finalizeGenericBrainResult(makeResult('phone', {
         ok: false,
         next_action: 'TRANSITION_NICHT_IDENTIFIZIERT',
         say: 'Ich konnte Sie leider nicht eindeutig verifizieren.',
@@ -966,11 +1200,11 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
       safety_flags: [],
     });
     saveSessionState(rawInput.session_id, session ?? emptySessionState());
-    return attachSessionDebug(result, rawInput.session_id, session);
+    return finalizeGenericBrainResult(result, rawInput.session_id, session);
   }
 
   if (input.check_birthday_result === 'success') {
-    return attachSessionDebug(makeResult('phone', {
+    return finalizeGenericBrainResult(makeResult('phone', {
       ok: true,
       next_action: 'TRANSITION_WEITER',
       say: 'Danke, die Verifizierung ist abgeschlossen.',
@@ -983,7 +1217,7 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
 
   if (input.check_birthday_result === 'failed') {
     if ((input.birthday_check_attempts ?? 0) >= 2 || (input.birthday_request_count ?? 0) >= 2) {
-      return attachSessionDebug(makeResult('phone', {
+      return finalizeGenericBrainResult(makeResult('phone', {
         ok: false,
         next_action: 'TRANSITION_NICHT_IDENTIFIZIERT',
         say: 'Ich konnte Sie leider nicht eindeutig verifizieren.',
@@ -1003,11 +1237,11 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
       safety_flags: ['birthday_retry'],
     });
     saveSessionState(rawInput.session_id, session ?? emptySessionState());
-    return attachSessionDebug(result, rawInput.session_id, session);
+    return finalizeGenericBrainResult(result, rawInput.session_id, session);
   }
 
   if (input.birthday_system_available === false) {
-    return attachSessionDebug(makeResult('phone', {
+    return finalizeGenericBrainResult(makeResult('phone', {
       ok: false,
       next_action: 'TECHNICAL_ESCALATION',
       say: 'Es gibt gerade ein technisches Problem bei der Verifizierung. Ich gebe das intern weiter.',
@@ -1026,7 +1260,7 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
     function_to_call: 'check_birthday',
   });
   saveSessionState(rawInput.session_id, session ?? emptySessionState());
-  return attachSessionDebug(result, rawInput.session_id, session);
+  return finalizeGenericBrainResult(result, rawInput.session_id, session);
 }
 
 export function runVerificationAddressBrain(rawInput: VerificationAddressBrainInput): VerificationMethodBrainResult {
@@ -1035,49 +1269,83 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
     session.active_verification_path = 'address';
     if (rawInput.phone_lookup_found !== undefined) session.phone_lookup_found = rawInput.phone_lookup_found;
   }
+
   const latestText = getSpeechInput(rawInput.latest_customer_input, []);
-  const birthdayMerge = mergeBirthday(
-    rawInput.birthday_customer ?? session?.birthday_customer ?? undefined,
-    latestText,
-    session?.pending_birthday_day,
-    session?.pending_birthday_month
-  );
+  const basePlz = rawInput.plz ?? session?.plz ?? undefined;
+  const baseHouseNumber = rawInput.house_number ?? session?.house_number ?? undefined;
+  const baseBirthday = rawInput.birthday_customer ?? session?.birthday_customer ?? undefined;
+  const baseLookupResult =
+    rawInput.get_customer_by_plz_geb_result ??
+    (session?.get_customer_by_plz_geb_result as VerificationAddressBrainInput['get_customer_by_plz_geb_result'] | null) ??
+    'not_called';
+  const baseLookupAttempts = rawInput.address_lookup_attempts ?? session?.attempts.address_lookup_attempts ?? 0;
+
+  const awaitingField = resolveAddressAwaitingField({
+    plz: basePlz,
+    house_number: baseHouseNumber,
+    birthday_customer: baseBirthday,
+    get_customer_by_plz_geb_result: baseLookupResult,
+    address_lookup_attempts: baseLookupAttempts,
+    sessionAwaiting: session?.awaiting_field,
+  });
+
+  const parsedFromLatest =
+    awaitingField === 'confirm_address'
+      ? {}
+      : parseAddressFieldFromUtterance(
+          awaitingField,
+          latestText,
+          baseBirthday,
+          session?.pending_birthday_day,
+          session?.pending_birthday_month
+        );
+
+  const birthdayMerge =
+    parsedFromLatest.birthdayMerge ??
+    mergeBirthday(baseBirthday, undefined, session?.pending_birthday_day, session?.pending_birthday_month);
+
   const input: VerificationAddressBrainInput = {
     ...rawInput,
     phone_lookup_found: rawInput.phone_lookup_found ?? session?.phone_lookup_found ?? undefined,
-    plz: rawInput.plz ?? session?.plz ?? parsePlz(latestText),
-    house_number: rawInput.house_number ?? session?.house_number ?? parseHouseNumber(latestText),
+    plz: parsedFromLatest.plz ?? basePlz,
+    house_number: parsedFromLatest.house_number ?? baseHouseNumber,
     birthday_customer: birthdayMerge.value,
-    get_customer_by_plz_geb_result:
-      rawInput.get_customer_by_plz_geb_result ??
-      (session?.get_customer_by_plz_geb_result as VerificationAddressBrainInput['get_customer_by_plz_geb_result'] | null) ??
-      'not_called',
-    address_lookup_attempts: rawInput.address_lookup_attempts ?? session?.attempts.address_lookup_attempts ?? 0,
+    get_customer_by_plz_geb_result: baseLookupResult,
+    address_lookup_attempts: baseLookupAttempts,
   };
-  const normalizedFunctionArguments =
+
+  const plzGebArgs =
     input.plz && input.house_number && input.birthday_customer
-      ? {
-          plz: input.plz,
-          house_number: input.house_number,
-          birthday: input.birthday_customer,
-        }
+      ? buildPlzGebFunctionArgs(input.plz, input.house_number, input.birthday_customer)
       : null;
+
+  const finalize = (
+    result: VerificationMethodBrainResult,
+    nextAwaiting: AddressAwaitingField | null
+  ): VerificationMethodBrainResult =>
+    finalizeAddressBrainResult(result, {
+      sessionId: rawInput.session_id,
+      state: session,
+      awaiting_field: nextAwaiting,
+      addressInput: input,
+    });
 
   if (session) {
     session.phone_lookup_found = input.phone_lookup_found ?? session.phone_lookup_found;
     if (input.plz) session.plz = input.plz;
-    else if (rawInput.latest_customer_input) session.attempts.plz_attempts += 1;
+    else if (rawInput.latest_customer_input && awaitingField === 'plz') session.attempts.plz_attempts += 1;
     if (input.house_number) session.house_number = input.house_number;
-    else if (rawInput.latest_customer_input && input.plz) session.attempts.house_number_attempts += 1;
-    if (birthdayMerge.value) session.birthday_customer = birthdayMerge.value;
+    else if (rawInput.latest_customer_input && awaitingField === 'house_number') {
+      session.attempts.house_number_attempts += 1;
+    }
+    if (input.birthday_customer) session.birthday_customer = input.birthday_customer;
     if (birthdayMerge.parse.status === 'complete') {
       session.pending_birthday_day = null;
       session.pending_birthday_month = null;
     } else if (birthdayMerge.parse.status === 'incomplete_year') {
       session.pending_birthday_day = birthdayMerge.parse.day ?? null;
       session.pending_birthday_month = birthdayMerge.parse.month ?? null;
-    }
-    else if (rawInput.latest_customer_input && input.plz && input.house_number) {
+    } else if (rawInput.latest_customer_input && awaitingField === 'birthday_customer' && !birthdayMerge.value) {
       session.attempts.birthday_collection_attempts += 1;
     }
     if (rawInput.get_customer_by_plz_geb_result) {
@@ -1091,165 +1359,202 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
   const transfer = maybeTransferHuman('address', input.customer_requested_human, input.office_hours);
   if (transfer) {
     saveSessionState(rawInput.session_id, session ?? emptySessionState());
-    return attachSessionDebug(transfer, rawInput.session_id, session);
+    return finalize(transfer, awaitingField);
   }
 
   if (!input.plz) {
-    const result = makeResult('address', {
-      ok: true,
-      next_action: 'ASK_PLZ',
-      say:
-        (input.address_lookup_attempts ?? 0) >= 1
-          ? 'Ich habe bisher noch keine vollständige Postleitzahl. Bitte nennen oder bestätigen Sie die Postleitzahl.'
-          : 'Bitte nennen Sie mir Ihre Postleitzahl.',
-      reason: 'PLZ is required before the address lookup can run.',
-      missing_fields: ['plz'],
-      safety_flags: [],
-    });
-    saveSessionState(rawInput.session_id, session ?? emptySessionState());
-    return attachSessionDebug(result, rawInput.session_id, session);
+    return finalize(
+      makeResult('address', {
+        ok: true,
+        next_action: 'ASK_PLZ',
+        say:
+          (input.address_lookup_attempts ?? 0) >= 1
+            ? 'Ich habe bisher noch keine vollständige Postleitzahl. Bitte nennen oder bestätigen Sie die Postleitzahl.'
+            : 'Bitte nennen Sie mir Ihre Postleitzahl.',
+        reason: 'PLZ is required before the address lookup can run.',
+        missing_fields: ['plz'],
+        safety_flags: [],
+        awaiting_field: 'plz',
+      }),
+      'plz'
+    );
   }
 
   if (!input.house_number) {
-    const result = makeResult('address', {
-      ok: true,
-      next_action: 'ASK_HOUSE_NUMBER',
-      say:
-        (input.address_lookup_attempts ?? 0) >= 1
-          ? `Ich habe bisher Postleitzahl ${input.plz} verstanden. Bitte nennen oder bestätigen Sie jetzt noch die Hausnummer.`
-          : 'Bitte nennen Sie mir Ihre Hausnummer.',
-      reason: 'House number is required before the address lookup can run.',
-      missing_fields: ['house_number'],
-      safety_flags: [],
-    });
-    saveSessionState(rawInput.session_id, session ?? emptySessionState());
-    return attachSessionDebug(result, rawInput.session_id, session);
+    return finalize(
+      makeResult('address', {
+        ok: true,
+        next_action: 'ASK_HOUSE_NUMBER',
+        say:
+          (input.address_lookup_attempts ?? 0) >= 1
+            ? `Ich habe bisher Postleitzahl ${input.plz} verstanden. Bitte nennen oder bestätigen Sie jetzt noch die Hausnummer.`
+            : 'Bitte nennen Sie mir Ihre Hausnummer.',
+        reason: 'House number is required before the address lookup can run.',
+        missing_fields: ['house_number'],
+        safety_flags: [],
+        awaiting_field: 'house_number',
+      }),
+      'house_number'
+    );
   }
 
   if (birthdayMerge.parse.status === 'incomplete_year') {
-    const result = makeResult('address', {
-      ok: true,
-      next_action: 'ASK_BIRTH_YEAR',
-      say: 'Bitte nennen Sie mir noch das Geburtsjahr vollständig.',
-      reason: birthdayMerge.parse.reason ?? 'Birthday was only partially provided.',
-      missing_fields: ['birth_year'],
-      safety_flags: ['never_call_check_birthday_in_address_path'],
-    });
-    saveSessionState(rawInput.session_id, session ?? emptySessionState());
-    return attachSessionDebug(result, rawInput.session_id, session);
+    return finalize(
+      makeResult('address', {
+        ok: true,
+        next_action: 'ASK_BIRTH_YEAR',
+        say: 'Bitte nennen Sie mir noch das Geburtsjahr vollständig.',
+        reason: birthdayMerge.parse.reason ?? 'Birthday was only partially provided.',
+        missing_fields: ['birth_year'],
+        safety_flags: ['never_call_check_birthday_in_address_path'],
+        awaiting_field: 'birthday_customer',
+      }),
+      'birthday_customer'
+    );
   }
 
   if (birthdayMerge.parse.status === 'impossible') {
-    return attachSessionDebug(makeResult('address', {
-      ok: false,
-      next_action: 'ASK_BIRTHDAY',
-      say: 'Das Geburtsdatum konnte ich so nicht verarbeiten. Bitte nennen Sie es noch einmal vollständig.',
-      reason: birthdayMerge.parse.reason ?? 'Birthday was impossible or ambiguous.',
-      missing_fields: ['birthday_customer'],
-      safety_flags: ['birthday_invalid', 'never_call_check_birthday_in_address_path'],
-    }), rawInput.session_id, session);
+    return finalize(
+      makeResult('address', {
+        ok: false,
+        next_action: 'ASK_BIRTHDAY',
+        say: 'Das Geburtsdatum konnte ich so nicht verarbeiten. Bitte nennen Sie es noch einmal vollständig.',
+        reason: birthdayMerge.parse.reason ?? 'Birthday was impossible or ambiguous.',
+        missing_fields: ['birthday_customer'],
+        safety_flags: ['birthday_invalid', 'never_call_check_birthday_in_address_path'],
+        awaiting_field: 'birthday_customer',
+      }),
+      'birthday_customer'
+    );
   }
 
   if (!input.birthday_customer) {
-    const result = makeResult('address', {
-      ok: true,
-      next_action: 'ASK_BIRTHDAY',
-      say:
-        (input.address_lookup_attempts ?? 0) >= 1
-          ? `Ich habe bisher Postleitzahl ${input.plz} und Hausnummer ${input.house_number} verstanden. Bitte nennen oder bestätigen Sie jetzt noch Ihr Geburtsdatum.`
-          : 'Bitte nennen Sie mir zur Verifizierung Ihr Geburtsdatum.',
-      reason: 'Birthday is required together with PLZ and house number for the address lookup.',
-      missing_fields: ['birthday_customer'],
-      safety_flags: ['never_call_check_birthday_in_address_path'],
-    });
-    saveSessionState(rawInput.session_id, session ?? emptySessionState());
-    return attachSessionDebug(result, rawInput.session_id, session);
+    return finalize(
+      makeResult('address', {
+        ok: true,
+        next_action: 'ASK_BIRTHDAY',
+        say:
+          (input.address_lookup_attempts ?? 0) >= 1
+            ? `Ich habe bisher Postleitzahl ${input.plz} und Hausnummer ${input.house_number} verstanden. Bitte nennen oder bestätigen Sie jetzt noch Ihr Geburtsdatum.`
+            : 'Bitte nennen Sie mir zur Verifizierung Ihr Geburtsdatum.',
+        reason: 'Birthday is required together with PLZ and house number for the address lookup.',
+        missing_fields: ['birthday_customer'],
+        safety_flags: ['never_call_check_birthday_in_address_path'],
+        awaiting_field: 'birthday_customer',
+      }),
+      'birthday_customer'
+    );
   }
 
   if (input.get_customer_by_plz_geb_result === 'found') {
-    return attachSessionDebug(makeResult('address', {
-      ok: true,
-      next_action: 'TRANSITION_WEITER',
-      say: 'Danke, die Verifizierung ist abgeschlossen.',
-      reason: 'Address lookup found the customer using PLZ, house number, and birthday.',
-      missing_fields: [],
-      safety_flags: ['never_call_check_birthday_in_address_path'],
-      transition_to: 'weiter',
-    }), rawInput.session_id, session);
+    return finalize(
+      makeResult('address', {
+        ok: true,
+        next_action: 'TRANSITION_WEITER',
+        say: 'Danke, die Verifizierung ist abgeschlossen.',
+        reason: 'Address lookup found the customer using PLZ, house number, and birthday.',
+        missing_fields: [],
+        safety_flags: ['never_call_check_birthday_in_address_path'],
+        transition_to: 'weiter',
+        awaiting_field: null,
+      }),
+      null
+    );
   }
 
   if (input.get_customer_by_plz_geb_result === 'not_found') {
     if ((input.address_lookup_attempts ?? 0) >= 2) {
-      return attachSessionDebug(makeResult('address', {
-        ok: false,
-        next_action: 'FALLBACK_TO_VNR',
-        say: 'Ich konnte Sie über diese Angaben nicht eindeutig finden. Bitte nennen Sie mir stattdessen Ihre Versicherungsnummer.',
-        reason: 'Address lookup failed twice, so the next safe fallback is VNR verification.',
-        missing_fields: [],
-        safety_flags: ['fallback_to_vnr', 'never_call_check_birthday_in_address_path'],
-      }), rawInput.session_id, session);
+      return finalize(
+        makeResult('address', {
+          ok: false,
+          next_action: 'FALLBACK_TO_VNR',
+          say: 'Ich konnte Sie über diese Angaben nicht eindeutig finden. Bitte nennen Sie mir stattdessen Ihre Versicherungsnummer.',
+          reason: 'Address lookup failed twice, so the next safe fallback is VNR verification.',
+          missing_fields: [],
+          safety_flags: ['fallback_to_vnr', 'never_call_check_birthday_in_address_path'],
+          awaiting_field: null,
+        }),
+        null
+      );
     }
 
     if (isYesLike(latestText)) {
-      const result = makeResult('address', {
-        ok: true,
-        next_action: 'CALL_GET_CUSTOMER_BY_PLZ_GEB',
-        say: '',
-        reason: 'Customer confirmed the previously understood address values, so a retry lookup is allowed.',
-        missing_fields: [],
-        safety_flags: ['address_retry', 'never_call_check_birthday_in_address_path'],
-        function_to_call: 'get_customer_by_plz_geb',
-        function_arguments: normalizedFunctionArguments ?? undefined,
-      });
-      saveSessionState(rawInput.session_id, session ?? emptySessionState());
-      return attachSessionDebug(result, rawInput.session_id, session);
+      return finalize(
+        makeResult('address', {
+          ok: true,
+          next_action: 'CALL_GET_CUSTOMER_BY_PLZ_GEB',
+          say: '',
+          reason: 'Customer confirmed the previously understood address values, so a retry lookup is allowed.',
+          missing_fields: [],
+          safety_flags: ['address_retry', 'never_call_check_birthday_in_address_path'],
+          function_to_call: 'get_customer_by_plz_geb',
+          function_arguments: plzGebArgs?.function_arguments,
+          leaping_function_arguments: plzGebArgs?.leaping_function_arguments,
+          awaiting_field: 'confirm_address',
+        }),
+        'confirm_address'
+      );
     }
 
-    const result = makeResult('address', {
-      ok: true,
-      next_action: 'CONFIRM_ADDRESS_VALUES',
-      say: `Ich habe bisher Postleitzahl ${input.plz}, Hausnummer ${input.house_number} und Ihr Geburtsdatum verstanden. Bitte bestätigen oder korrigieren Sie diese Angaben kurz.`,
-      reason: 'Address lookup failed once and the next safe step is targeted confirmation of the stored values.',
-      missing_fields: [],
-      safety_flags: ['address_retry', 'never_call_check_birthday_in_address_path'],
-    });
-    saveSessionState(rawInput.session_id, session ?? emptySessionState());
-    return attachSessionDebug(result, rawInput.session_id, session);
+    return finalize(
+      makeResult('address', {
+        ok: true,
+        next_action: 'CONFIRM_ADDRESS_VALUES',
+        say: `Ich habe bisher Postleitzahl ${input.plz}, Hausnummer ${input.house_number} und Ihr Geburtsdatum verstanden. Bitte bestätigen oder korrigieren Sie diese Angaben kurz.`,
+        reason: 'Address lookup failed once and the next safe step is targeted confirmation of the stored values.',
+        missing_fields: [],
+        safety_flags: ['address_retry', 'never_call_check_birthday_in_address_path'],
+        awaiting_field: 'confirm_address',
+      }),
+      'confirm_address'
+    );
   }
 
   if (input.get_customer_by_plz_geb_result === 'error') {
     if ((input.address_lookup_attempts ?? 0) >= 2) {
-      return attachSessionDebug(makeResult('address', {
-        ok: false,
-        next_action: 'FALLBACK_TO_VNR',
-        say: 'Ich wechsle zur Verifizierung über Ihre Versicherungsnummer.',
-        reason: 'Address lookup produced repeated errors, so the safe fallback is VNR verification.',
-        missing_fields: [],
-        safety_flags: ['address_lookup_error', 'fallback_to_vnr', 'never_call_check_birthday_in_address_path'],
-      }), rawInput.session_id, session);
+      return finalize(
+        makeResult('address', {
+          ok: false,
+          next_action: 'FALLBACK_TO_VNR',
+          say: 'Ich wechsle zur Verifizierung über Ihre Versicherungsnummer.',
+          reason: 'Address lookup produced repeated errors, so the safe fallback is VNR verification.',
+          missing_fields: [],
+          safety_flags: ['address_lookup_error', 'fallback_to_vnr', 'never_call_check_birthday_in_address_path'],
+          awaiting_field: null,
+        }),
+        null
+      );
     }
 
-    return attachSessionDebug(makeResult('address', {
-      ok: false,
-      next_action: 'TECHNICAL_ESCALATION',
-      say: 'Es gibt gerade ein technisches Problem bei der Verifizierung. Ich gebe das intern weiter.',
-      reason: 'Address lookup returned an error before a safe retry decision could be made.',
-      missing_fields: [],
-      safety_flags: ['address_lookup_error', 'never_call_check_birthday_in_address_path'],
-    }), rawInput.session_id, session);
+    return finalize(
+      makeResult('address', {
+        ok: false,
+        next_action: 'TECHNICAL_ESCALATION',
+        say: 'Es gibt gerade ein technisches Problem bei der Verifizierung. Ich gebe das intern weiter.',
+        reason: 'Address lookup returned an error before a safe retry decision could be made.',
+        missing_fields: [],
+        safety_flags: ['address_lookup_error', 'never_call_check_birthday_in_address_path'],
+        awaiting_field: 'confirm_address',
+      }),
+      'confirm_address'
+    );
   }
-  const result = makeResult('address', {
-    ok: true,
-    next_action: 'CALL_GET_CUSTOMER_BY_PLZ_GEB',
-    say: '',
-    reason: 'PLZ, house number, and birthday are complete.',
-    missing_fields: [],
-    safety_flags: ['never_call_check_birthday_in_address_path'],
-    function_to_call: 'get_customer_by_plz_geb',
-    function_arguments: normalizedFunctionArguments ?? undefined,
-  });
-  saveSessionState(rawInput.session_id, session ?? emptySessionState());
-  return attachSessionDebug(result, rawInput.session_id, session);
+
+  return finalize(
+    makeResult('address', {
+      ok: true,
+      next_action: 'CALL_GET_CUSTOMER_BY_PLZ_GEB',
+      say: '',
+      reason: 'PLZ, house number, and birthday are complete.',
+      missing_fields: [],
+      safety_flags: ['never_call_check_birthday_in_address_path'],
+      function_to_call: 'get_customer_by_plz_geb',
+      function_arguments: plzGebArgs?.function_arguments,
+      leaping_function_arguments: plzGebArgs?.leaping_function_arguments,
+      awaiting_field: null,
+    }),
+    null
+  );
 }
 
 export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): VerificationMethodBrainResult {
@@ -1295,7 +1600,7 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
     birthday_check_attempts: rawInput.birthday_check_attempts ?? session?.attempts.birthday_check_attempts ?? 0,
   };
   const finalize = (result: VerificationMethodBrainResult) =>
-    attachSessionDebug(
+    finalizeGenericBrainResult(
       { ...result, safety_flags: [...extraSafetyFlags, ...result.safety_flags] },
       rawInput.session_id,
       session

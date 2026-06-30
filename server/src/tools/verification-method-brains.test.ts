@@ -102,13 +102,29 @@ test('address path calls get_customer_by_plz_geb when complete', () => {
   assert.equal(result.function_to_call, 'get_customer_by_plz_geb');
 });
 
-test('address path parses latest utterance and normalizes house number', () => {
-  const result = runVerificationAddressBrain({
-    latest_customer_input: 'Meine Postleitzahl ist vier eins drei sieben zwei, Hausnummer hundert B, geboren am 16.03.1956',
+test('address path parses latest utterance and normalizes house number across session turns', () => {
+  const sessionId = 'address-all-in-one-session';
+  const first = runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'Meine Postleitzahl ist vier eins drei sieben zwei',
   });
+  assert.equal(first.next_action, 'ASK_HOUSE_NUMBER');
+  assert.equal(first.stored_values?.plz, '41372');
+  assert.equal(first.stored_values?.house_number, null);
 
-  assert.equal(result.next_action, 'CALL_GET_CUSTOMER_BY_PLZ_GEB');
-  assert.equal(result.function_to_call, 'get_customer_by_plz_geb');
+  const second = runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'Hausnummer hundert B',
+  });
+  assert.equal(second.next_action, 'ASK_BIRTHDAY');
+  assert.equal(second.stored_values?.house_number, '100');
+
+  const third = runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'geboren am 16.03.1956',
+  });
+  assert.equal(third.next_action, 'CALL_GET_CUSTOMER_BY_PLZ_GEB');
+  assert.equal(third.function_to_call, 'get_customer_by_plz_geb');
 });
 
 test('address path transitions weiter after found', () => {
@@ -186,6 +202,13 @@ test('address path stores PLZ, house number, and birthday across session calls',
   assert.equal(third.function_to_call, 'get_customer_by_plz_geb');
   assert.deepEqual(third.function_arguments, {
     plz: '41372',
+    hnr: '100',
+    bday: '1956-03-16',
+  });
+  assert.deepEqual(third.leaping_function_arguments, {
+    plz: '41372',
+    hnr: '100',
+    bday: '1956-03-16',
     house_number: '100',
     birthday: '1956-03-16',
   });
@@ -227,15 +250,169 @@ test('second address not_found falls back to VNR', () => {
   assert.equal(result.next_action, 'FALLBACK_TO_VNR');
 });
 
-test('spoken PLZ and house number are normalized before function call', () => {
+test('spoken PLZ utterance stores plz only and does not misparse house_number 1372', () => {
   const result = runVerificationAddressBrain({
-    session_id: 'address-normalized',
-    latest_customer_input: 'Postleitzahl vier eins drei sieben zwei, Hausnummer einhundert, Geburtstag 16.03.1956',
+    session_id: 'address-plz-only-guard',
+    latest_customer_input: 'vier eins drei sieben zwei',
+    phone_lookup_found: false,
+  });
+
+  assert.equal(result.next_action, 'ASK_HOUSE_NUMBER');
+  assert.equal(result.awaiting_field, 'house_number');
+  assert.equal(result.stored_values?.plz, '41372');
+  assert.equal(result.stored_values?.house_number, null);
+});
+
+test('partial four-digit PLZ is rejected and not stored as house_number while awaiting plz', () => {
+  const result = runVerificationAddressBrain({
+    session_id: 'address-partial-plz',
+    latest_customer_input: 'eins drei sieben zwei',
+    phone_lookup_found: false,
+  });
+
+  assert.equal(result.next_action, 'ASK_PLZ');
+  assert.equal(result.awaiting_field, 'plz');
+  assert.equal(result.stored_values?.plz, null);
+  assert.equal(result.stored_values?.house_number, null);
+});
+
+test('partial digits can be stored as house_number only when awaiting house_number', () => {
+  const result = runVerificationAddressBrain({
+    session_id: 'address-awaiting-hnr',
+    plz: '41372',
+    latest_customer_input: 'eins drei sieben zwei',
+  });
+
+  assert.equal(result.next_action, 'ASK_BIRTHDAY');
+  assert.equal(result.stored_values?.house_number, '1372');
+});
+
+test('einhundert normalizes to house_number 100 only when awaiting house_number', () => {
+  const rejected = runVerificationAddressBrain({
+    session_id: 'address-einhundert-wrong-field',
+    latest_customer_input: 'einhundert',
+  });
+  assert.equal(rejected.next_action, 'ASK_PLZ');
+  assert.equal(rejected.stored_values?.house_number, null);
+
+  const accepted = runVerificationAddressBrain({
+    session_id: 'address-einhundert-correct-field',
+    plz: '41372',
+    latest_customer_input: 'einhundert',
+  });
+  assert.equal(accepted.next_action, 'ASK_BIRTHDAY');
+  assert.equal(accepted.stored_values?.house_number, '100');
+});
+
+test('full address sequence with session_id reaches CALL_FUNCTION with normalized args', () => {
+  const sessionId = 'address-full-sequence-41372';
+
+  runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'vier eins drei sieben zwei',
+    phone_lookup_found: false,
+  });
+  runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'einhundert',
+  });
+  const result = runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'Sechzehnter März neunzehnhundertsechsundfünfzig',
+  });
+
+  assert.equal(result.action_type, 'CALL_FUNCTION');
+  assert.equal(result.next_action, 'CALL_GET_CUSTOMER_BY_PLZ_GEB');
+  assert.deepEqual(result.function_arguments, {
+    plz: '41372',
+    hnr: '100',
+    bday: '1956-03-16',
+  });
+});
+
+test('stateless mode returns known_values_required_next_call with parsed values', () => {
+  const result = runVerificationAddressBrain({
+    plz: '41372',
+    house_number: '100',
+    birthday_customer: '1956-03-16',
+    phone_lookup_found: false,
+  });
+
+  assert.equal(result.session_mode, 'stateless');
+  assert.ok(result.safety_flags.includes('missing_session_id'));
+  assert.deepEqual(result.known_values_required_next_call, {
+    plz: '41372',
+    house_number: '100',
+    birthday_customer: '1956-03-16',
+    phone_lookup_found: 'false',
+  });
+  assert.equal(result.stored_values?.plz, '41372');
+  assert.equal(result.stored_values?.house_number, '100');
+  assert.equal(result.stored_values?.birthday_customer, '1956-03-16');
+});
+
+test('first address not_found asks for confirmation, second falls back to VNR', () => {
+  const sessionId = 'address-not-found-flow';
+
+  const first = runVerificationAddressBrain({
+    session_id: sessionId,
+    plz: '41372',
+    house_number: '100',
+    birthday_customer: '1956-03-16',
+    get_customer_by_plz_geb_result: 'not_found',
+  });
+  assert.equal(first.next_action, 'CONFIRM_ADDRESS_VALUES');
+  assert.equal(first.awaiting_field, 'confirm_address');
+  assert.equal(first.action_type, 'SAY_ONLY');
+
+  const second = runVerificationAddressBrain({
+    session_id: sessionId,
+    get_customer_by_plz_geb_result: 'not_found',
+    address_lookup_attempts: 2,
+  });
+  assert.equal(second.next_action, 'FALLBACK_TO_VNR');
+  assert.equal(second.action_type, 'SAY_ONLY');
+});
+
+test('address path exposes action_type aliases without removing legacy fields', () => {
+  const result = runVerificationAddressBrain({
+    plz: '22765',
+    house_number: '14',
+    birthday_customer: '1948-05-03',
+  });
+
+  assert.equal(result.action_type, 'CALL_FUNCTION');
+  assert.equal(result.active_brain, 'address');
+  assert.equal(result.function_name, 'get_customer_by_plz_geb');
+  assert.equal(result.function_to_call, 'get_customer_by_plz_geb');
+  assert.equal(result.requires_followup_mcp_call, true);
+});
+
+test('spoken values normalize before function call when collected stepwise in session', () => {
+  const sessionId = 'address-normalized';
+  runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'Postleitzahl vier eins drei sieben zwei',
+  });
+  runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'Hausnummer einhundert',
+  });
+  const result = runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'Geburtstag 16.03.1956',
   });
 
   assert.equal(result.next_action, 'CALL_GET_CUSTOMER_BY_PLZ_GEB');
   assert.deepEqual(result.function_arguments, {
     plz: '41372',
+    hnr: '100',
+    bday: '1956-03-16',
+  });
+  assert.deepEqual(result.leaping_function_arguments, {
+    plz: '41372',
+    hnr: '100',
+    bday: '1956-03-16',
     house_number: '100',
     birthday: '1956-03-16',
   });
