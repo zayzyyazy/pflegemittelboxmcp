@@ -183,11 +183,12 @@ test('address path stores PLZ, house number, and birthday across session calls',
     latest_customer_input: '16.03.1956',
   });
   assert.equal(third.next_action, 'CALL_GET_CUSTOMER_BY_PLZ_GEB');
+  assert.equal(third.action_type, 'CALL_FUNCTION');
   assert.equal(third.function_to_call, 'get_customer_by_plz_geb');
   assert.deepEqual(third.function_arguments, {
     plz: '41372',
-    house_number: '100',
-    birthday: '1956-03-16',
+    hnr: '100',
+    bday: '1956-03-16',
   });
   assert.equal(third.stored_values?.plz, '41372');
   assert.equal(third.stored_values?.house_number, '100');
@@ -236,8 +237,8 @@ test('spoken PLZ and house number are normalized before function call', () => {
   assert.equal(result.next_action, 'CALL_GET_CUSTOMER_BY_PLZ_GEB');
   assert.deepEqual(result.function_arguments, {
     plz: '41372',
-    house_number: '100',
-    birthday: '1956-03-16',
+    hnr: '100',
+    bday: '1956-03-16',
   });
 });
 
@@ -328,6 +329,42 @@ test('latest_customer_input valid triggers warning and does not become customer 
 
   assert.ok(result.safety_flags.includes('latest_customer_input_looks_like_function_result'));
   assert.equal(result.next_action, 'CALL_CHECK_INSURANCE_NUMBER_FORMAT');
+});
+
+test('short four-digit spoken plz does not become a full PLZ', () => {
+  const result = runVerificationAddressBrain({
+    latest_customer_input: 'eins drei sieben zwei',
+  });
+
+  assert.equal(result.next_action, 'ASK_PLZ');
+});
+
+test('spoken full plz normalizes to 41372', () => {
+  const result = runVerificationAddressBrain({
+    latest_customer_input: 'vier eins drei sieben zwei',
+  });
+
+  assert.equal(result.known_values_required_next_call?.plz, '41372');
+});
+
+test('spoken einhundert normalizes to house number 100', () => {
+  const result = runVerificationAddressBrain({
+    session_id: 'house-100',
+    plz: '41372',
+    latest_customer_input: 'einhundert',
+  });
+
+  assert.equal(result.stored_values?.house_number, '100');
+});
+
+test('stateless mode clearly reports missing session id and known values', () => {
+  const result = runVerificationAddressBrain({
+    latest_customer_input: 'vier eins drei sieben zwei',
+  });
+
+  assert.equal(result.session_mode, 'stateless');
+  assert.ok(result.safety_flags.includes('missing_session_id'));
+  assert.equal(result.known_values_required_next_call?.plz, '41372');
 });
 
 test('VNR digits-only candidate is rejected as missing leading letter', () => {

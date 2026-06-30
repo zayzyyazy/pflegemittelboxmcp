@@ -118,6 +118,16 @@ Recommended integration pattern:
 - Do not pass the customer's Anliegen, requested month, or general request text as `latest_customer_input`.
 - If available, pass a stable `session_id` / call ID so the verification brains can reuse stored PLZ, house number, birthday, VNR, and function results across turns.
 
+Minimal clone prompt for the verification experiment:
+
+- At stage start call MCP immediately.
+- After every customer verification answer call MCP again.
+- If `action_type=SAY_ONLY`, say only `say`.
+- If `action_type=CALL_FUNCTION`, call `function_name` with `function_arguments`.
+- After every native function result call MCP again with the dedicated result field.
+- Never call native verification functions unless MCP returns `action_type=CALL_FUNCTION`.
+- Never generate verification wording yourself.
+
 Important: the MCP only reduces wrong-order decisions if it is used as a gatekeeper. If all native Leaping functions stay enabled in one large stage, Marie can still call functions in the wrong order. The safer setup is to restrict enabled native functions per clone stage so the clone can only execute the function that the MCP brain explicitly allows.
 
 ## Local development
