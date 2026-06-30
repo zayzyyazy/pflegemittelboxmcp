@@ -29,6 +29,11 @@ db.exec(`
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS processed_post_call_alerts (
+    call_id      TEXT PRIMARY KEY,
+    processed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  );
 `);
 
 // Seed defaults only when the key does not yet exist
@@ -36,6 +41,7 @@ const defaults: [string, string][] = [
   ['mcp_url', 'http://localhost:3001'],
   ['env_label', 'local'],
   ['leaping_mcp_url', ''],
+  ['leaping_agent_id', ''],
 ];
 for (const [k, v] of defaults) {
   db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (@k, @v)').run({ k, v });
@@ -98,4 +104,25 @@ export function setSetting(key: string, value: string): void {
     key,
     value,
   });
+}
+
+const selectProcessedPostCallAlert = db.prepare(`
+  SELECT 1
+  FROM processed_post_call_alerts
+  WHERE call_id = @callId
+  LIMIT 1
+`);
+
+const insertProcessedPostCallAlert = db.prepare(`
+  INSERT OR REPLACE INTO processed_post_call_alerts (call_id)
+  VALUES (@callId)
+`);
+
+export function hasProcessedPostCallAlert(callId: string): boolean {
+  const row = selectProcessedPostCallAlert.get({ callId }) as { 1?: number } | undefined;
+  return Boolean(row);
+}
+
+export function markProcessedPostCallAlert(callId: string): void {
+  insertProcessedPostCallAlert.run({ callId });
 }

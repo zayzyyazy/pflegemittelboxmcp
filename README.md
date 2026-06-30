@@ -1,214 +1,196 @@
-# Pflegemittelbox MCP Tools
+# Pflegemittelbox MCP
 
-A local MCP (Model Context Protocol) server + developer dashboard for building and testing tools that can be connected to Leaping AI (Marie).
+Pflegemittelbox MCP is a Node.js MCP server plus a small developer dashboard for building, testing, and operating Marie support tools used from Leaping AI.
 
-**Requirements:** Node.js 22.5+ (uses the built-in `node:sqlite` — no native compilation needed)
+The production deployment target is a public HTTPS endpoint on the Pflegemittelbox company server. MCP routes are protected with shared-secret authentication so random public traffic cannot call the tools.
 
-## What's in the box
+## Current architecture
 
-| Part | What it does |
-|------|--------------|
-| `server/` | Express + TypeScript server that speaks MCP over SSE. Logs every tool call to SQLite. |
-| `dashboard/` | React + Vite dashboard to list tools, test them, inspect logs, and manage settings. |
+| Part | Purpose |
+| --- | --- |
+| `server/` | Express + TypeScript MCP server, REST admin API, SQLite-backed logs/settings, post-call monitor |
+| `dashboard/` | Local React dashboard for testing tools, checking logs, and editing non-secret settings |
+| `data/` | Runtime SQLite database for tool logs, settings, and processed post-call alerts |
 
-### Current MCP Tools
+## Public endpoints
 
-| Tool | Safe? | Description |
-|------|-------|-------------|
-| `normalize_vnr` | ✓ | Converts spoken German VNR text ("L wie Ludwig null drei...") to a clean candidate like `L039359923` |
-| `health_check` | ✓ | Returns `{ ok: true }` — use this to verify Leaping can reach the server |
+| Endpoint | Purpose | Auth |
+| --- | --- | --- |
+| `/health` | Health and runtime status | public |
+| `/mcp/sse` | Leaping MCP endpoint (streamable HTTP) | required |
+| `/mcp/messages` | Legacy MCP SSE message handler | required |
+| `/api/*` | Local dashboard/admin API | no MCP auth layer; keep behind your own server access controls |
 
----
+## MCP authentication
 
-## Quick start
+Production must enable MCP authentication. The server refuses production startup if MCP auth is disabled or incomplete.
 
-### 1. Install dependencies
+Supported modes:
 
-```bash
-cd /path/to/pflegemittelbox-mcp
-npm install              # installs concurrently at root
-npm run setup            # installs server + dashboard deps
+### Bearer token
+
+```env
+MCP_AUTH_ENABLED=true
+MCP_AUTH_TYPE=bearer
+MCP_AUTH_TOKEN=replace-with-a-long-random-secret
 ```
 
-Or manually:
+Leaping sends:
 
-```bash
-cd server && npm install
-cd ../dashboard && npm install
+```text
+Authorization: Bearer YOUR_SECRET
 ```
 
-### 2. Configure environment
+### Custom header
+
+```env
+MCP_AUTH_ENABLED=true
+MCP_AUTH_TYPE=header
+MCP_AUTH_HEADER_NAME=X-MCP-API-Key
+MCP_AUTH_HEADER_VALUE=replace-with-a-long-random-secret
+```
+
+Leaping sends:
+
+```text
+X-MCP-API-Key: YOUR_SECRET
+```
+
+## Current production tool list
+
+| Tool | Purpose |
+| --- | --- |
+| `normalize_vnr` | Normalize messy spoken German VNR text |
+| `pmb_normalize_vnr` | Alias for `normalize_vnr` |
+| `pmb_address_verification_guardrail` | Parse and preserve PLZ, house number, and birthday during address fallback |
+| `pmb_verification_brain` | Deterministic verification decision engine |
+| `pmb_delivery_status_reasoner` | Deterministic delivery-status answer helper |
+| `pmb_post_call_alert_detector` | Detect dropped/failed/problematic calls from structured call data |
+| `pmb_post_call_email_notifier` | Send post-call alert emails, with LLM-drafted email content and deterministic fallback |
+| `health_check` | MCP reachability check |
+| `pmb_health_check` | Alias for `health_check` |
+
+## Post-call monitoring and alerts
+
+The server can run an optional background monitor outside the Leaping workflow graph.
+
+What it does:
+
+- logs into Leaping with configured API credentials
+- fetches recent finished calls for a configured agent/clone
+- maps those calls into the deterministic alert detector
+- sends alert emails when a call needs review
+- avoids duplicate alerts by storing processed call IDs in SQLite
+
+Email delivery currently supports Gmail SMTP and Resend. If LLM drafting is enabled, the server uses an OpenAI-compatible endpoint to generate the email subject/body and falls back to plain text if the LLM call fails.
+
+## Local development
+
+### Install
+
+From the repo root:
+
+```bash
+npm install
+npm run setup
+```
+
+### Configure
 
 ```bash
 cd server
 cp .env.example .env
-# Edit .env if you want a different port or ENV_LABEL
 ```
 
-### 3. Run everything
+### Run
 
-From the root directory:
+From the repo root:
 
 ```bash
 npm run dev
 ```
 
-This starts both:
-- **MCP server** → `http://localhost:3001`
-- **Dashboard** → `http://localhost:5173`
+This starts:
 
-Or run them separately:
+- server on `http://localhost:3001`
+- dashboard on `http://localhost:5173`
+
+## Production deployment
+
+Primary deployment path:
+
+- company server
+- Node.js 22 LTS
+- PM2 or system service
+- public HTTPS handled by IT
+
+Use these files:
+
+- `server/.env.production.example`
+- `docs/DEPLOY_COMPANY_SERVER.md`
+
+### Production server commands
+
+From `server/`:
 
 ```bash
-# Terminal 1
-cd server && npm run dev
-
-# Terminal 2
-cd dashboard && npm run dev
+npm install
+npm test
+npm run build
+npm start
 ```
 
----
-
-## Dashboard pages
-
-| Page | URL | Purpose |
-|------|-----|---------|
-| MCP Tools | `/` | List tools, run tests, see recent call history |
-| Leaping Functions | `/leaping` | Reference table of all Marie/Leaping functions |
-| Call Logs | `/logs` | Live log of every tool call (auto-refreshes every 3s) |
-| Settings | `/settings` | Server URL, environment label, Leaping connection guide |
-
----
-
-## Test the tools manually
-
-### normalize_vnr
+### PM2 example
 
 ```bash
-curl -X POST http://localhost:3001/api/tools/normalize_vnr/test \
+cd server
+pm2 start npm --name pflegemittelbox-mcp -- start
+pm2 save
+```
+
+## Environment variables
+
+Minimum production set:
+
+```env
+NODE_ENV=production
+ENV_LABEL=company
+PORT=3000
+PUBLIC_BASE_URL=https://leapingai-api.pflegemittelbox.de
+MCP_AUTH_ENABLED=true
+MCP_AUTH_TYPE=bearer
+MCP_AUTH_TOKEN=replace-with-a-long-random-secret
+```
+
+Optional variables are documented in `server/.env.example` and `server/.env.production.example`.
+
+## Verification
+
+Health:
+
+```bash
+curl https://DOMAIN/health
+```
+
+Unauthenticated MCP check:
+
+```bash
+curl -i https://DOMAIN/mcp/sse
+```
+
+Expected: `401 Unauthorized`
+
+Authenticated tool discovery:
+
+```bash
+curl -X POST https://DOMAIN/mcp/sse \
   -H "Content-Type: application/json" \
-  -d '{"text": "L wie Ludwig null drei neun drei fünf neun neun zwei drei"}'
+  -H "Authorization: Bearer YOUR_SECRET" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 ```
 
-Expected:
-```json
-{
-  "output": {
-    "candidate": "L039359923",
-    "valid_shape": true,
-    "confidence": "high",
-    "notes": "Extracted L from phonetic \"wie\" pattern. Converted German number words to digits."
-  },
-  "duration_ms": 1
-}
-```
+## Notes
 
-### health_check
-
-```bash
-curl -X POST http://localhost:3001/api/tools/health_check/test \
-  -H "Content-Type: application/json" \
-  -d '{}'
-```
-
-Expected:
-```json
-{ "output": { "ok": true, "service": "pflegemittelbox-mcp", "version": "0.1.0" }, "duration_ms": 0 }
-```
-
-### MCP SSE endpoint (for Leaping)
-
-```
-GET http://localhost:3001/mcp/sse
-```
-
----
-
-## Connecting to Leaping
-
-1. **Run the server locally** (`npm run dev` in `server/`)
-2. **Expose it publicly** — pick one:
-
-   ```bash
-   # ngrok (easiest)
-   ngrok http 3001
-
-   # Cloudflare Tunnel
-   cloudflared tunnel --url http://localhost:3001
-   ```
-
-3. **Copy the public URL** — e.g. `https://abc123.ngrok-free.app`
-4. In **Leaping → your agent → MCP Servers → Add**
-5. Paste: `https://abc123.ngrok-free.app/mcp/sse`
-6. Click **Discover** — Leaping will find `health_check` and `normalize_vnr`
-7. Test `health_check` first to confirm the connection works
-8. Add `normalize_vnr` to the relevant stage where Marie captures the VNR
-
-> The Settings page in the dashboard has this guide as well.
-
----
-
-## Adding more tools later
-
-To add a new tool:
-
-1. Create `server/src/tools/your-tool.ts` with the pure logic function
-2. Register it in `server/src/mcp.ts` using `mcpServer.tool(...)`
-3. Add a test case to `server/src/routes/api.ts` in the `/tools/:name/test` switch
-4. Add the definition to `TOOL_DEFS` in the same file (dashboard picks it up automatically)
-
-**Suggested next tools** (safe, read-only):
-- `verify_vnr_format` — thin wrapper around `check_insurance_number_format`
-- `lookup_customer` — calls `get_customer_by_insurance_number` (needs real API creds)
-- `verify_birthday` — calls `check_birthday`
-
-**Do NOT add** production-changing functions (phone save, ticket create) until you have:
-- A confirmation step in the flow
-- Clear logging
-- A kill switch / feature flag
-
----
-
-## Project structure
-
-```
-pflegemittelbox-mcp/
-├── package.json          ← root: npm run dev starts both
-├── README.md
-├── server/
-│   ├── .env.example
-│   ├── package.json
-│   ├── tsconfig.json
-│   └── src/
-│       ├── index.ts              ← Express entry point
-│       ├── db.ts                 ← SQLite (logs + settings)
-│       ├── mcp.ts                ← MCP server + tool registration
-│       ├── tools/
-│       │   └── normalize-vnr.ts  ← VNR normalization logic
-│       └── routes/
-│           ├── api.ts            ← REST API for dashboard
-│           └── mcp-http.ts       ← /mcp/sse + /mcp/messages
-└── dashboard/
-    ├── index.html
-    ├── vite.config.ts            ← proxies /api and /mcp to :3001
-    └── src/
-        ├── App.tsx               ← sidebar + routing
-        ├── api.ts                ← fetch helpers
-        ├── types.ts              ← shared TypeScript types
-        ├── index.css             ← all styles (no framework)
-        └── pages/
-            ├── ToolsPage.tsx
-            ├── LeapingFunctionsPage.tsx
-            ├── LogsPage.tsx
-            └── SettingsPage.tsx
-```
-
----
-
-## Security notes
-
-- The server is **local-only** by default. It binds to `localhost:3001`.
-- No real Pflegemittelbox API keys are used or needed yet.
-- All secrets go in `server/.env` — this file is in `.gitignore`.
-- When you later add real API credentials, they live **only** in `.env` and are never sent to the dashboard frontend.
-- Production-changing tools are clearly marked in the Leaping Functions reference page.
+- Runtime SQLite files under `data/` are operational artifacts and should not be committed.
+- Secrets belong in `server/.env` on the target server, never in the repo.
+- The dashboard is an operator convenience tool, not part of the public Leaping integration path.

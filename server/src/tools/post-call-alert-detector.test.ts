@@ -4,9 +4,20 @@ import { runPostCallAlertDetector } from './post-call-alert-detector.js';
 
 test('alerts on long call without successful verification', () => {
   const result = runPostCallAlertDetector({
-    duration_seconds: 487,
+    duration_seconds: 181,
     verification_successful: false,
     call_status: 'completed',
+  });
+
+  assert.equal(result.alert_required, true);
+  assert.equal(result.alert_type, 'LONG_FAILED_VERIFICATION');
+});
+
+test('alerts on 3-minute unverified call even when status is not completed', () => {
+  const result = runPostCallAlertDetector({
+    duration_seconds: 181,
+    verification_successful: false,
+    call_status: 'transferred',
   });
 
   assert.equal(result.alert_required, true);

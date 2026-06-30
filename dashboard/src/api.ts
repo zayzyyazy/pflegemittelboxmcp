@@ -61,3 +61,7 @@ export function saveSettings(data: Partial<import('./types').Settings>) {
     body: JSON.stringify(data),
   });
 }
+
+export function fetchPostCallMonitorStatus() {
+  return request<import('./types').PostCallMonitorStatus>('/api/post-call-monitor/status');
+}

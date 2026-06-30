@@ -1,16 +1,26 @@
 import { useEffect, useState } from 'react';
-import { fetchSettings, saveSettings, fetchStatus } from '../api';
-import type { Settings, ServerStatus } from '../types';
+import { fetchPostCallMonitorStatus, fetchSettings, saveSettings, fetchStatus } from '../api';
+import type { PostCallMonitorStatus, Settings, ServerStatus } from '../types';
 
 export default function SettingsPage() {
-  const [settings, setSettings] = useState<Settings>({ mcp_url: '', env_label: 'local', leaping_mcp_url: '' });
+  const [settings, setSettings] = useState<Settings>({
+    mcp_url: '',
+    env_label: 'local',
+    leaping_mcp_url: '',
+    leaping_agent_id: '',
+  });
   const [status, setStatus] = useState<ServerStatus | null>(null);
+  const [monitorStatus, setMonitorStatus] = useState<PostCallMonitorStatus | null>(null);
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.all([fetchSettings(), fetchStatus().catch(() => null)])
-      .then(([s, st]) => { setSettings(s); setStatus(st); })
+    Promise.all([
+      fetchSettings(),
+      fetchStatus().catch(() => null),
+      fetchPostCallMonitorStatus().catch(() => null),
+    ])
+      .then(([s, st, ms]) => { setSettings(s); setStatus(st); setMonitorStatus(ms); })
       .finally(() => setLoading(false));
   }, []);
 
@@ -62,6 +72,50 @@ export default function SettingsPage() {
         </div>
       </div>
 
+      <div className="card" style={{ marginBottom: 20 }}>
+        <div className="card-header">
+          <h3>Post-Call Monitor</h3>
+          <span
+            className={`badge ${
+              monitorStatus?.enabled ? 'badge-safe' : 'badge-info'
+            }`}
+          >
+            {monitorStatus?.enabled ? 'enabled' : 'disabled'}
+          </span>
+        </div>
+        <div className="card-body">
+          {monitorStatus ? (
+            <>
+              <table style={{ width: 'auto' }}>
+                <tbody>
+                  {([
+                    ['Running now', monitorStatus.running ? 'yes' : 'no'],
+                    ['Configured clone/agent ID', monitorStatus.configured_agent_id ?? 'not set'],
+                    ['Interval', monitorStatus.interval_seconds ? `${monitorStatus.interval_seconds}s` : 'n/a'],
+                    ['Last run ok', monitorStatus.last_run_ok === null ? 'not run yet' : monitorStatus.last_run_ok ? 'yes' : 'no'],
+                    ['Last finished', monitorStatus.last_run_finished_at ?? 'not run yet'],
+                  ] as [string, string][]).map(([k, v]) => (
+                    <tr key={k}>
+                      <td style={{ color: 'var(--text-muted)', fontSize: 12, paddingRight: 24, paddingTop: 4, paddingBottom: 4 }}>{k}</td>
+                      <td style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>{v}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {monitorStatus.last_error && (
+                <div className="notice notice-warning" style={{ marginTop: 12, marginBottom: 0 }}>
+                  <strong>Last error:</strong> {monitorStatus.last_error}
+                </div>
+              )}
+            </>
+          ) : (
+            <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>
+              Monitor status is unavailable.
+            </p>
+          )}
+        </div>
+      </div>
+
       {/* ── Settings form ─────────────────────────────────────── */}
       <div className="card">
         <div className="card-header"><h3>Configuration</h3></div>
@@ -106,11 +160,43 @@ export default function SettingsPage() {
               </div>
             </div>
 
+            <div className="field">
+              <label>Leaping Clone / Agent ID</label>
+              <input
+                type="text"
+                value={settings.leaping_agent_id}
+                onChange={(e) => setSettings((s) => ({ ...s, leaping_agent_id: e.target.value }))}
+                placeholder="e.g. c07c158a-1763-4ba9-acb9-2a6c6a633b25"
+              />
+              <div className="field-hint">
+                Used by the background post-call monitor. You can paste the clone/agent ID from the Leaping URL here.
+              </div>
+            </div>
+
             <div className="gap-2">
               <button className="btn btn-primary" type="submit">Save</button>
               {saved && <span style={{ color: 'var(--success)', fontSize: 13 }}>✓ Saved</span>}
             </div>
           </form>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-header"><h3>Email Secret Setup</h3></div>
+        <div className="card-body">
+          <div className="notice notice-warning" style={{ marginBottom: 12 }}>
+            SMTP passwords and API keys are intentionally not stored in the dashboard UI.
+          </div>
+          <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 12 }}>
+            Keep the sensitive pieces in <code>server/.env</code>. For Gmail, the monitor still expects:
+          </p>
+          <pre className="json-block" style={{ marginBottom: 0 }}>
+{`ALERT_EMAIL_PROVIDER=gmail
+ALERT_EMAIL_FROM=Pflegemittelbox Alerts <yourgmail@gmail.com>
+ALERT_EMAIL_TO=you@example.com
+GMAIL_SMTP_USER=yourgmail@gmail.com
+GMAIL_SMTP_APP_PASSWORD=your-google-app-password`}
+          </pre>
         </div>
       </div>
 

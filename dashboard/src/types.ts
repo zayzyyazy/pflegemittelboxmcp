@@ -42,6 +42,7 @@ export interface Settings {
   mcp_url: string;
   env_label: string;
   leaping_mcp_url: string;
+  leaping_agent_id: string;
 }
 
 export interface LeapingFunction {
@@ -62,4 +63,26 @@ export interface ServerStatus {
   env: string;
   tool_count: number;
   uptime_s: number;
+}
+
+export interface PostCallMonitorStatus {
+  enabled: boolean;
+  running: boolean;
+  interval_seconds: number | null;
+  configured_agent_id: string | null;
+  last_run_started_at: string | null;
+  last_run_finished_at: string | null;
+  last_run_ok: boolean | null;
+  last_error: string | null;
+  last_summary: {
+    ok: boolean;
+    fetched_calls: number;
+    terminal_calls_seen: number;
+    already_processed: number;
+    processed_now: number;
+    alerts_sent: number;
+    alerts_skipped: number;
+    started_at: string;
+    finished_at: string;
+  } | null;
 }

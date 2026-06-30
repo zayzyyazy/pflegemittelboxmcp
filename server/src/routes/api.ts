@@ -23,6 +23,7 @@ import {
   runVerificationBrain,
 } from '../tools/verification-brain.js';
 import { logCall, getLogs, clearLogs, getSettings, setSetting } from '../db.js';
+import { getPostCallMonitorState, runPostCallMonitorCycle } from '../post-call-monitor.js';
 
 export const apiRouter = Router();
 
@@ -311,6 +312,10 @@ apiRouter.post('/tools/:name/test', async (req, res) => {
           subjectPrefix: appConfig.ALERT_EMAIL_SUBJECT_PREFIX,
           gmailUser: appConfig.GMAIL_SMTP_USER,
           gmailAppPassword: appConfig.GMAIL_SMTP_APP_PASSWORD,
+          llmEnabled: appConfig.ALERT_EMAIL_LLM_ENABLED,
+          openaiApiKey: appConfig.OPENAI_API_KEY,
+          openaiModel: appConfig.OPENAI_MODEL,
+          openaiBaseUrl: appConfig.OPENAI_BASE_URL,
         }
       );
     } else if (name === 'health_check' || name === 'pmb_health_check') {
@@ -349,7 +354,7 @@ apiRouter.get('/settings', (_req, res) => {
 
 apiRouter.put('/settings', (req, res) => {
   const body = req.body as Record<string, string>;
-  const ALLOWED = ['mcp_url', 'env_label', 'leaping_mcp_url'];
+  const ALLOWED = ['mcp_url', 'env_label', 'leaping_mcp_url', 'leaping_agent_id'];
 
   for (const key of ALLOWED) {
     if (typeof body[key] === 'string') {
@@ -357,6 +362,20 @@ apiRouter.put('/settings', (req, res) => {
     }
   }
   res.json(getSettings());
+});
+
+apiRouter.get('/post-call-monitor/status', (_req, res) => {
+  res.json(getPostCallMonitorState());
+});
+
+apiRouter.post('/post-call-monitor/run', async (_req, res) => {
+  try {
+    const summary = await runPostCallMonitorCycle(appConfig);
+    res.json(summary);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    res.status(500).json({ ok: false, error: message });
+  }
 });
 
 // ── Leaping functions reference (static, read-only) ─────────────────────

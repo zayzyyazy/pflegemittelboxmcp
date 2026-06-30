@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildPostCallAlertEmail,
+  draftPostCallAlertEmailWithLlm,
   runPostCallEmailNotifier,
   type SendEmailPayload,
 } from './post-call-email-notifier.js';
@@ -110,4 +111,120 @@ test('sends through injected sender when configured', async () => {
   assert.equal(payload.to, 'ops@example.com');
   assert.match(payload.subject, /\[Test Bot\]/);
   assert.match(payload.text, /call_send/);
+});
+
+test('uses LLM drafted subject and body when configured', async () => {
+  let sentPayload: SendEmailPayload | null = null;
+
+  const result = await runPostCallEmailNotifier(
+    {
+      call_id: 'call_llm',
+      duration_seconds: 420,
+      verification_successful: false,
+      call_status: 'completed',
+    },
+    {
+      apiKey: 're_test',
+      from: 'alerts@example.com',
+      defaultTo: 'ops@example.com',
+      llmEnabled: true,
+      openaiApiKey: 'sk-test',
+    },
+    async (payload) => {
+      sentPayload = payload;
+      return { id: 'msg_llm', provider: 'gmail' };
+    },
+    async () => ({
+      subject: 'LLM Betreff',
+      email_text: 'LLM Mailtext',
+    })
+  );
+
+  assert.equal(result.email_sent, true);
+  assert.equal(result.subject, 'LLM Betreff');
+  assert.equal(result.email_text, 'LLM Mailtext');
+  assert.equal(sentPayload?.subject, 'LLM Betreff');
+  assert.equal(sentPayload?.text, 'LLM Mailtext');
+});
+
+test('falls back to plain text email when LLM drafting fails', async () => {
+  let sentPayload: SendEmailPayload | null = null;
+
+  const result = await runPostCallEmailNotifier(
+    {
+      call_id: 'call_fallback',
+      duration_seconds: 420,
+      verification_successful: false,
+      call_status: 'completed',
+    },
+    {
+      apiKey: 're_test',
+      from: 'alerts@example.com',
+      defaultTo: 'ops@example.com',
+      llmEnabled: true,
+      openaiApiKey: 'sk-test',
+    },
+    async (payload) => {
+      sentPayload = payload;
+      return { id: 'msg_fallback', provider: 'gmail' };
+    },
+    async () => {
+      throw new Error('LLM unavailable');
+    }
+  );
+
+  assert.equal(result.email_sent, true);
+  assert.match(result.subject, /Pflegemittelbox Alert/i);
+  assert.match(result.email_text, /Call ID: call_fallback/);
+  assert.match(sentPayload?.text ?? '', /Call ID: call_fallback/);
+});
+
+test('draftPostCallAlertEmailWithLlm parses structured OpenAI response text', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        output: [
+          {
+            type: 'message',
+            content: [
+              {
+                type: 'output_text',
+                text: JSON.stringify({
+                  subject: 'Kurzer Betreff',
+                  email_text: 'Sauberer Mailtext',
+                }),
+              },
+            ],
+          },
+        ],
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    )) as typeof fetch;
+
+  try {
+    const drafted = await draftPostCallAlertEmailWithLlm(
+      {
+        call_id: 'call_openai',
+        duration_seconds: 220,
+        verification_successful: false,
+        call_status: 'dropped',
+      },
+      buildPostCallAlertEmail({
+        call_id: 'call_openai',
+        duration_seconds: 220,
+        verification_successful: false,
+        call_status: 'dropped',
+      }),
+      {
+        openaiApiKey: 'sk-test',
+        openaiModel: 'gpt-4.1-mini',
+      }
+    );
+
+    assert.equal(drafted.subject, 'Kurzer Betreff');
+    assert.equal(drafted.email_text, 'Sauberer Mailtext');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

@@ -1,0 +1,39 @@
+services:
+  mcp:
+    build:
+      context: ../../server
+    container_name: pflegemittelbox-mcp
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      PORT: ${APP_PORT:-3000}
+      NODE_ENV: production
+      ENV_LABEL: ${ENV_LABEL:-hetzner}
+      PUBLIC_BASE_URL: https://${DOMAIN}
+    volumes:
+      - ../../data:/app/data
+    expose:
+      - "${APP_PORT:-3000}"
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: pflegemittelbox-caddy
+    restart: unless-stopped
+    depends_on:
+      - mcp
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+      APP_PORT: ${APP_PORT:-3000}
+      LETSENCRYPT_EMAIL: ${LETSENCRYPT_EMAIL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

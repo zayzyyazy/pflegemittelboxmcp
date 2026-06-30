@@ -49,6 +49,8 @@ export interface PostCallAlertDetectorResult {
   safety_flags: string[];
 }
 
+const LONG_CALL_ALERT_THRESHOLD_SECONDS = 180;
+
 function parseJsonish<T>(value: unknown): T | undefined {
   if (typeof value !== 'string') return undefined;
   try {
@@ -267,13 +269,16 @@ export function runPostCallAlertDetector(
     });
   }
 
-  if ((input.duration_seconds ?? 0) >= 300 && input.verification_successful !== true) {
+  if (
+    (input.duration_seconds ?? 0) >= LONG_CALL_ALERT_THRESHOLD_SECONDS &&
+    input.verification_successful !== true
+  ) {
     return makeAlert({
       alert_required: true,
       severity: 'high',
       alert_type: 'LONG_FAILED_VERIFICATION',
       title: 'Long call without successful verification',
-      summary: 'Call lasted more than 5 minutes and verification was not successful.',
+      summary: 'Call lasted more than 3 minutes and verification was not successful.',
       evidence: [
         `duration_seconds=${input.duration_seconds}`,
         `verification_successful=${String(input.verification_successful ?? false)}`,

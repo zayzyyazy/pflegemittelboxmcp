@@ -36,6 +36,10 @@ export interface EmailSendConfig {
   subjectPrefix?: string;
   gmailUser?: string;
   gmailAppPassword?: string;
+  llmEnabled?: boolean;
+  openaiApiKey?: string;
+  openaiModel?: string;
+  openaiBaseUrl?: string;
 }
 
 export interface SendEmailPayload {
@@ -49,6 +53,12 @@ export type SendEmailFn = (
   payload: SendEmailPayload,
   config: EmailSendConfig
 ) => Promise<{ id: string | null; provider: 'resend' | 'gmail' }>;
+
+export type DraftAlertEmailFn = (
+  input: PostCallEmailNotifierInput,
+  fallback: ReturnType<typeof buildPostCallAlertEmail>,
+  config: EmailSendConfig
+) => Promise<{ subject: string; email_text: string }>;
 
 function asString(value: unknown): string | undefined {
   if (typeof value === 'string') {
@@ -159,6 +169,150 @@ export function buildPostCallAlertEmail(
   };
 }
 
+function buildLlmPromptPayload(
+  input: PostCallEmailNotifierInput,
+  fallback: ReturnType<typeof buildPostCallAlertEmail>
+) {
+  return {
+    call_id: input.call_id ?? null,
+    call_date: input.call_date ?? deriveCallDate(input),
+    duration_seconds:
+      typeof input.duration_seconds === 'number' && Number.isFinite(input.duration_seconds)
+        ? input.duration_seconds
+        : null,
+    duration_label: formatDuration(input.duration_seconds),
+    call_status: input.call_status ?? 'unknown',
+    verification_successful: input.verification_successful ?? null,
+    authenticated: input.authenticated ?? null,
+    transcript_text: input.transcript_text?.slice(0, 8000) ?? null,
+    function_calls: input.function_calls ?? [],
+    transitions: input.transitions ?? [],
+    detected_events: input.detected_events ?? {},
+    fallback_alert: {
+      subject: fallback.subject,
+      biggest_problem: fallback.biggest_problem,
+      email_text: fallback.email_text,
+      safety_flags: fallback.safety_flags,
+    },
+  };
+}
+
+function extractOpenAiText(body: unknown): string | null {
+  const record = body && typeof body === 'object' ? (body as Record<string, unknown>) : null;
+  if (!record) return null;
+
+  if (typeof record.output_text === 'string' && record.output_text.trim()) {
+    return record.output_text.trim();
+  }
+
+  const output = Array.isArray(record.output) ? record.output : [];
+  for (const item of output) {
+    const itemRecord = item && typeof item === 'object' ? (item as Record<string, unknown>) : null;
+    if (!itemRecord) continue;
+    const content = Array.isArray(itemRecord.content) ? itemRecord.content : [];
+    for (const part of content) {
+      const partRecord = part && typeof part === 'object' ? (part as Record<string, unknown>) : null;
+      if (!partRecord) continue;
+      if (typeof partRecord.text === 'string' && partRecord.text.trim()) {
+        return partRecord.text.trim();
+      }
+    }
+  }
+
+  return null;
+}
+
+export async function draftPostCallAlertEmailWithLlm(
+  input: PostCallEmailNotifierInput,
+  fallback: ReturnType<typeof buildPostCallAlertEmail>,
+  config: EmailSendConfig
+): Promise<{ subject: string; email_text: string }> {
+  if (!config.openaiApiKey) {
+    throw new Error('Missing OPENAI_API_KEY.');
+  }
+
+  const baseUrl = (config.openaiBaseUrl ?? 'https://api.openai.com/v1').replace(/\/$/, '');
+  const response = await fetch(`${baseUrl}/responses`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${config.openaiApiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: config.openaiModel ?? 'gpt-4.1-mini',
+      input: [
+        {
+          role: 'system',
+          content: [
+            {
+              type: 'input_text',
+              text:
+                'You write concise internal alert emails for Pflegemittelbox operators. ' +
+                'Write in clear German. Be specific, operational, and easy to scan. ' +
+                'Do not invent facts. Use only the provided call payload.',
+            },
+          ],
+        },
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'input_text',
+              text:
+                'Draft a JSON object with keys "subject" and "email_text". ' +
+                'The subject should be short and useful. ' +
+                'The email_text should include: what happened, why it matters, relevant evidence, and a recommended next step. ' +
+                `Call payload:\n${JSON.stringify(buildLlmPromptPayload(input, fallback), null, 2)}`,
+            },
+          ],
+        },
+      ],
+      text: {
+        format: {
+          type: 'json_schema',
+          name: 'post_call_alert_email',
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              subject: { type: 'string' },
+              email_text: { type: 'string' },
+            },
+            required: ['subject', 'email_text'],
+          },
+          strict: true,
+        },
+      },
+    }),
+  });
+
+  const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!response.ok) {
+    const errorMessage: string =
+      typeof body.error === 'object' &&
+      body.error &&
+      typeof (body.error as Record<string, unknown>).message === 'string'
+        ? ((body.error as Record<string, unknown>).message as string)
+        : `OpenAI response drafting failed with HTTP ${response.status}`;
+    throw new Error(errorMessage);
+  }
+
+  const text = extractOpenAiText(body);
+  if (!text) {
+    throw new Error('OpenAI response drafting returned no text.');
+  }
+
+  const parsed = JSON.parse(text) as { subject?: unknown; email_text?: unknown };
+  if (typeof parsed.subject !== 'string' || typeof parsed.email_text !== 'string') {
+    throw new Error('OpenAI response drafting returned invalid JSON fields.');
+  }
+
+  return {
+    subject: parsed.subject.trim() || fallback.subject,
+    email_text: parsed.email_text.trim() || fallback.email_text,
+  };
+}
+
 export async function sendViaResend(
   payload: SendEmailPayload,
   config: EmailSendConfig
@@ -218,7 +372,8 @@ export async function sendViaGmail(
 export async function runPostCallEmailNotifier(
   input: PostCallEmailNotifierInput,
   config: EmailSendConfig,
-  sendEmail?: SendEmailFn
+  sendEmail?: SendEmailFn,
+  draftEmail?: DraftAlertEmailFn
 ): Promise<PostCallEmailNotifierResult> {
   const alert = runPostCallAlertDetector(input);
   const call_date = deriveCallDate(input);
@@ -310,7 +465,20 @@ export async function runPostCallEmailNotifier(
     };
   }
 
-  const subject = config.subjectPrefix ? `${config.subjectPrefix} ${built.subject}` : built.subject;
+  let draftedSubject = built.subject;
+  let draftedEmailText = built.email_text;
+  if (config.llmEnabled) {
+    try {
+      const llmDraft = await (draftEmail ?? draftPostCallAlertEmailWithLlm)(input, built, config);
+      draftedSubject = llmDraft.subject;
+      draftedEmailText = llmDraft.email_text;
+    } catch {
+      draftedSubject = built.subject;
+      draftedEmailText = built.email_text;
+    }
+  }
+
+  const subject = config.subjectPrefix ? `${config.subjectPrefix} ${draftedSubject}` : draftedSubject;
   const sender =
     sendEmail ?? (provider === 'gmail' ? sendViaGmail : sendViaResend);
   const sent = await sender(
@@ -318,7 +486,7 @@ export async function runPostCallEmailNotifier(
       to,
       from: config.from,
       subject,
-      text: built.email_text,
+      text: draftedEmailText,
     },
     config
   );
@@ -334,7 +502,7 @@ export async function runPostCallEmailNotifier(
     duration_label,
     biggest_problem: built.biggest_problem,
     subject,
-    email_text: built.email_text,
+    email_text: draftedEmailText,
     message_id: sent.id,
     reason: 'Alert email was sent successfully.',
     safety_flags: built.safety_flags,

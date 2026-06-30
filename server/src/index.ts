@@ -4,10 +4,13 @@ import { mcpRouter } from './routes/mcp-http.js';
 import { apiRouter } from './routes/api.js';
 import { setSetting } from './db.js';
 import { appConfig } from './config.js';
+import { getPostCallMonitorState, startPostCallMonitor } from './post-call-monitor.js';
+import { createMcpAuthMiddleware } from './mcp-auth.js';
 
 const app = express();
 const startedAt = new Date().toISOString();
 let shuttingDown = false;
+const postCallMonitor = startPostCallMonitor(appConfig);
 
 // Sync ENV_LABEL env var → settings table on each startup
 if (appConfig.ENV_LABEL) {
@@ -20,10 +23,12 @@ if (appConfig.NODE_ENV === 'production') {
 
 app.use(cors({ origin: true }));
 
+const mcpAuthMiddleware = createMcpAuthMiddleware(appConfig);
+
 // ── MCP routes ────────────────────────────────────────────────────────────
 // POST /mcp/sse applies express.json() inline (Streamable HTTP, what Leaping uses).
 // POST /mcp/messages does NOT — SSEServerTransport reads the raw body stream.
-app.use('/mcp', mcpRouter);
+app.use('/mcp', mcpAuthMiddleware, mcpRouter);
 
 // ── Dashboard REST API (JSON body parser applies only here) ──────────────
 app.use('/api', express.json(), apiRouter);
@@ -38,6 +43,7 @@ app.get('/health', (_req, res) => {
     uptime_s: Math.round(process.uptime()),
     shutting_down: shuttingDown,
     started_at: startedAt,
+    post_call_monitor: getPostCallMonitorState(),
   });
 });
 
@@ -52,6 +58,7 @@ app.get('/', (_req, res) => {
       mcp_messages: '/mcp/messages',
       api: '/api',
       health: '/health',
+      post_call_monitor_status: '/api/post-call-monitor/status',
     },
   });
 });
@@ -75,6 +82,9 @@ const server = app.listen(appConfig.PORT, () => {
       mcp_sse: `${publicBaseUrl}/mcp/sse`,
       mcp_messages: `${publicBaseUrl}/mcp/messages`,
     },
+    mcp_auth_enabled: appConfig.MCP_AUTH_ENABLED,
+    mcp_auth_type: appConfig.MCP_AUTH_ENABLED ? appConfig.MCP_AUTH_TYPE : 'none',
+    post_call_monitor_enabled: appConfig.POST_CALL_MONITOR_ENABLED,
   }, null, 2));
 });
 
@@ -98,6 +108,7 @@ server.on('error', (error: NodeJS.ErrnoException) => {
 function shutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
+  postCallMonitor?.stop();
   console.log(JSON.stringify({
     level: 'info',
     event: 'shutdown_started',

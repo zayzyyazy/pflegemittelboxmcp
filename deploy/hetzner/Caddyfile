@@ -1,0 +1,9 @@
+{$DOMAIN} {
+  tls {$LETSENCRYPT_EMAIL}
+
+  encode gzip zstd
+
+  reverse_proxy mcp:{$APP_PORT} {
+    health_uri /health
+  }
+}
