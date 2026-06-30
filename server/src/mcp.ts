@@ -20,6 +20,11 @@ import {
   runPostCallEmailNotifier,
 } from './tools/post-call-email-notifier.js';
 import { parseAddressVerificationGuardrail } from './tools/address-verification-guardrail.js';
+import {
+  runVerificationAddressBrain,
+  runVerificationPhoneBrain,
+  runVerificationVnrBrain,
+} from './tools/verification-method-brains.js';
 import { runVerificationBrain } from './tools/verification-brain.js';
 import { logCall } from './db.js';
 
@@ -133,6 +138,83 @@ export function createMcpServer(): McpServer {
         null,
         Date.now() - start
       );
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'pmb_verification_phone_brain',
+    'Deterministic phone verification step controller. Use only after get_customer_by_phone already found a customer.',
+    {
+      phone_lookup_found: z.boolean().optional(),
+      birthday_customer: z.string().optional(),
+      check_birthday_result: z.enum(['success', 'failed', 'error', 'not_called']).optional(),
+      check_birthday_error: z.string().optional(),
+      birthday_system_available: z.boolean().optional(),
+      birthday_request_count: z.number().optional(),
+      birthday_check_attempts: z.number().optional(),
+      customer_requested_human: z.boolean().optional(),
+      office_hours: z.boolean().optional(),
+    },
+    async (input) => {
+      const start = Date.now();
+      const result = runVerificationPhoneBrain(input);
+      logCall('pmb_verification_phone_brain', input, result, null, Date.now() - start);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'pmb_verification_address_brain',
+    'Deterministic address fallback verification step controller for PLZ + house number + birthday.',
+    {
+      phone_lookup_found: z.boolean().optional(),
+      plz: z.string().optional(),
+      house_number: z.string().optional(),
+      birthday_customer: z.string().optional(),
+      get_customer_by_plz_geb_result: z
+        .enum(['found', 'not_found', 'error', 'not_called'])
+        .optional(),
+      address_lookup_attempts: z.number().optional(),
+      customer_requested_human: z.boolean().optional(),
+      office_hours: z.boolean().optional(),
+    },
+    async (input) => {
+      const start = Date.now();
+      const result = runVerificationAddressBrain(input);
+      logCall('pmb_verification_address_brain', input, result, null, Date.now() - start);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'pmb_verification_vnr_brain',
+    'Deterministic VNR verification step controller that enforces the safe order: confirm VNR, format check, customer lookup, then birthday check.',
+    {
+      vnr_raw: z.string().optional(),
+      vnr_candidate: z.string().optional(),
+      vnr_confirmed: z.boolean().optional(),
+      check_insurance_number_format_result: z
+        .enum(['valid', 'invalid', 'error', 'not_called'])
+        .optional(),
+      get_customer_by_insurance_number_result: z
+        .enum(['found', 'not_found', 'error', 'not_called'])
+        .optional(),
+      birthday_customer: z.string().optional(),
+      check_birthday_result: z.enum(['success', 'failed', 'error', 'not_called']).optional(),
+      check_birthday_error: z.string().optional(),
+      birthday_system_available: z.boolean().optional(),
+      vnr_request_count: z.number().optional(),
+      vnr_lookup_attempts: z.number().optional(),
+      birthday_request_count: z.number().optional(),
+      birthday_check_attempts: z.number().optional(),
+      customer_requested_human: z.boolean().optional(),
+      office_hours: z.boolean().optional(),
+    },
+    async (input) => {
+      const start = Date.now();
+      const result = runVerificationVnrBrain(input);
+      logCall('pmb_verification_vnr_brain', input, result, null, Date.now() - start);
       return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
     }
   );

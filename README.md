@@ -64,6 +64,9 @@ X-MCP-API-Key: YOUR_SECRET
 | `pmb_normalize_vnr` | Alias for `normalize_vnr` |
 | `pmb_address_verification_guardrail` | Parse and preserve PLZ, house number, and birthday during address fallback |
 | `pmb_verification_brain` | Deterministic verification decision engine |
+| `pmb_verification_phone_brain` | Clone-only phone verification controller |
+| `pmb_verification_address_brain` | Clone-only address fallback verification controller |
+| `pmb_verification_vnr_brain` | Clone-only VNR verification controller |
 | `pmb_delivery_status_reasoner` | Deterministic delivery-status answer helper |
 | `pmb_post_call_alert_detector` | Detect dropped/failed/problematic calls from structured call data |
 | `pmb_post_call_email_notifier` | Send post-call alert emails, with LLM-drafted email content and deterministic fallback |
@@ -83,6 +86,18 @@ What it does:
 - avoids duplicate alerts by storing processed call IDs in SQLite
 
 Email delivery currently supports Gmail SMTP and Resend. If LLM drafting is enabled, the server uses an OpenAI-compatible endpoint to generate the email subject/body and falls back to plain text if the LLM call fails.
+
+## Clone verification experiment
+
+For Marie clone testing, the verification flow can use three narrow MCP brains as deterministic step controllers:
+
+- Phone method -> `pmb_verification_phone_brain`
+- Address method -> `pmb_verification_address_brain`
+- VNR method -> `pmb_verification_vnr_brain`
+
+The clone should ask the MCP what to do next and follow `next_action` exactly.
+
+Important: the MCP only reduces wrong-order decisions if it is used as a gatekeeper. If all native Leaping functions stay enabled in one large stage, Marie can still call functions in the wrong order. The safer setup is to restrict enabled native functions per clone stage so the clone can only execute the function that the MCP brain explicitly allows.
 
 ## Local development
 

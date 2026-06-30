@@ -19,6 +19,11 @@ import {
   runPostCallEmailNotifier,
 } from '../tools/post-call-email-notifier.js';
 import {
+  runVerificationAddressBrain,
+  runVerificationPhoneBrain,
+  runVerificationVnrBrain,
+} from '../tools/verification-method-brains.js';
+import {
   coerceVerificationBrainInput,
   runVerificationBrain,
 } from '../tools/verification-brain.js';
@@ -115,6 +120,77 @@ const TOOL_DEFS = [
         },
       },
       required: ['raw_text', 'attempt'],
+    },
+  },
+  {
+    name: 'pmb_verification_phone_brain',
+    description:
+      'Deterministic phone verification controller. Use only after get_customer_by_phone already found a customer.',
+    category: 'guardrail',
+    safe: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        phone_lookup_found: { type: 'boolean' },
+        birthday_customer: { type: 'string' },
+        check_birthday_result: { type: 'string' },
+        check_birthday_error: { type: 'string' },
+        birthday_system_available: { type: 'boolean' },
+        birthday_request_count: { type: 'number' },
+        birthday_check_attempts: { type: 'number' },
+        customer_requested_human: { type: 'boolean' },
+        office_hours: { type: 'boolean' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'pmb_verification_address_brain',
+    description:
+      'Deterministic address fallback verification controller for PLZ + house number + birthday.',
+    category: 'guardrail',
+    safe: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        phone_lookup_found: { type: 'boolean' },
+        plz: { type: 'string' },
+        house_number: { type: 'string' },
+        birthday_customer: { type: 'string' },
+        get_customer_by_plz_geb_result: { type: 'string' },
+        address_lookup_attempts: { type: 'number' },
+        customer_requested_human: { type: 'boolean' },
+        office_hours: { type: 'boolean' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'pmb_verification_vnr_brain',
+    description:
+      'Deterministic VNR verification controller that blocks birthday check before customer lookup.',
+    category: 'guardrail',
+    safe: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        vnr_raw: { type: 'string' },
+        vnr_candidate: { type: 'string' },
+        vnr_confirmed: { type: 'boolean' },
+        check_insurance_number_format_result: { type: 'string' },
+        get_customer_by_insurance_number_result: { type: 'string' },
+        birthday_customer: { type: 'string' },
+        check_birthday_result: { type: 'string' },
+        check_birthday_error: { type: 'string' },
+        birthday_system_available: { type: 'boolean' },
+        vnr_request_count: { type: 'number' },
+        vnr_lookup_attempts: { type: 'number' },
+        birthday_request_count: { type: 'number' },
+        birthday_check_attempts: { type: 'number' },
+        customer_requested_human: { type: 'boolean' },
+        office_hours: { type: 'boolean' },
+      },
+      required: [],
     },
   },
   {
@@ -291,6 +367,12 @@ apiRouter.post('/tools/:name/test', async (req, res) => {
         return;
       }
       output = parseAddressVerificationGuardrail(guardrailInput);
+    } else if (name === 'pmb_verification_phone_brain') {
+      output = runVerificationPhoneBrain(input as Record<string, unknown>);
+    } else if (name === 'pmb_verification_address_brain') {
+      output = runVerificationAddressBrain(input as Record<string, unknown>);
+    } else if (name === 'pmb_verification_vnr_brain') {
+      output = runVerificationVnrBrain(input as Record<string, unknown>);
     } else if (name === 'pmb_verification_brain') {
       output = runVerificationBrain(coerceVerificationBrainInput(input as Record<string, unknown>));
     } else if (name === 'pmb_delivery_status_reasoner') {
