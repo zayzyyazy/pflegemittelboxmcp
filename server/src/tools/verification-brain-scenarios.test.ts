@@ -713,8 +713,12 @@ const SCENARIOS: Scenario[] = [
       { input: { session_id: 'call_3', latest_customer_input: '16.03.1956' } },
     ],
     expect: {
-      custom: (r) => (r.action_type === 'CALL_FUNCTION' ? 'should not complete lookup across changing session_ids' : null),
-      session_mode: 'stateless',
+      custom: (r) =>
+        r.action_type === 'CALL_FUNCTION'
+          ? 'should not complete lookup across changing session_ids'
+          : r.next_action === 'ASK_PLZ'
+            ? null
+            : `expected broken-session ASK_PLZ, got ${r.next_action}`,
     },
   },
   {
@@ -785,10 +789,10 @@ const SCENARIOS: Scenario[] = [
     session_id: 'addr-055',
     steps: [{ input: { latest_customer_input: 'Ich bin Neukunde' } }],
     expect: {
-      custom: (r) =>
-        r.next_action === 'TRANSITION_NICHT_IDENTIFIZIERT' || r.transition_name === 'nicht_identifiziert'
-          ? null
-          : `expected nicht_identifiziert handling, got ${r.next_action}`,
+      action_type: 'TRANSITION',
+      next_action: 'TRANSITION_NICHT_IDENTIFIZIERT',
+      transition_name: 'nicht_identifiziert',
+      safety_flag: 'customer_is_neukunde',
     },
   },
 ];

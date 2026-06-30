@@ -601,6 +601,96 @@ test('VNR path stops loops after attempt limits', () => {
   assert.equal(birthdayLimit.next_action, 'TRANSITION_NICHT_IDENTIFIZIERT');
 });
 
+test('address brain normalizes object not_found results inside runner', () => {
+  const sessionId = 'address-object-not-found';
+  runVerificationAddressBrain({
+    session_id: sessionId,
+    plz: '41372',
+    house_number: '100',
+    birthday_customer: '1956-03-16',
+  });
+  const result = runVerificationAddressBrain({
+    session_id: sessionId,
+    get_customer_by_plz_geb_result: { error: 'Kein Kunde gefunden' },
+  });
+  assert.equal(result.next_action, 'CONFIRM_ADDRESS_VALUES');
+  assert.equal(result.stored_values?.get_customer_by_plz_geb_result, 'not_found');
+});
+
+test('phone brain normalizes boolean check_birthday_result inside runner', () => {
+  const success = runVerificationPhoneBrain({
+    session_id: 'phone-bool-success',
+    phone_lookup_found: true,
+    birthday_customer: '1956-03-16',
+    check_birthday_result: true as unknown as 'success',
+  });
+  assert.equal(success.next_action, 'TRANSITION_WEITER');
+
+  const failed = runVerificationPhoneBrain({
+    session_id: 'phone-bool-failed',
+    phone_lookup_found: true,
+    birthday_customer: '1956-03-16',
+    check_birthday_result: false as unknown as 'failed',
+  });
+  assert.equal(failed.next_action, 'ASK_BIRTHDAY');
+});
+
+test('vnr brain normalizes invalid format and not_found lookup objects', () => {
+  const invalid = runVerificationVnrBrain({
+    session_id: 'vnr-bool-invalid',
+    vnr_candidate: 'L039359923',
+    vnr_confirmed: true,
+    check_insurance_number_format_result: false as unknown as 'invalid',
+  });
+  assert.equal(invalid.next_action, 'ASK_VNR');
+
+  const sessionId = 'vnr-object-not-found';
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    vnr_candidate: 'L039359923',
+    vnr_confirmed: true,
+    check_insurance_number_format_result: 'valid',
+  });
+  const notFound = runVerificationVnrBrain({
+    session_id: sessionId,
+    get_customer_by_insurance_number_result: { error: 'Kein Kunde gefunden' },
+  });
+  assert.equal(notFound.next_action, 'ASK_VNR');
+  assert.equal(notFound.stored_values?.get_customer_by_insurance_number_result, 'not_found');
+});
+
+test('check_birthday and insurance calls include function_arguments', () => {
+  const phone = runVerificationPhoneBrain({
+    phone_lookup_found: true,
+    birthday_customer: '1956-03-16',
+    birthday_system_available: true,
+  });
+  assert.deepEqual(phone.function_arguments, { birthday: '1956-03-16' });
+
+  const vnr = runVerificationVnrBrain({
+    vnr_candidate: 'L039359923',
+    vnr_confirmed: true,
+  });
+  assert.deepEqual(vnr.function_arguments, { insurance_number: 'L039359923' });
+});
+
+test('address brain surfaces function-result-like safety flag', () => {
+  const result = runVerificationAddressBrain({
+    session_id: 'address-valid-flag',
+    latest_customer_input: 'valid',
+  });
+  assert.ok(result.safety_flags.includes('latest_customer_input_looks_like_function_result'));
+});
+
+test('address brain transitions neukunde to nicht_identifiziert', () => {
+  const result = runVerificationAddressBrain({
+    session_id: 'address-neukunde',
+    latest_customer_input: 'Ich bin Neukunde',
+  });
+  assert.equal(result.next_action, 'TRANSITION_NICHT_IDENTIFIZIERT');
+  assert.equal(result.transition_name, 'nicht_identifiziert');
+});
+
 test('VNR path asks only for birth year when birthday is incomplete', () => {
   const result = runVerificationVnrBrain({
     latest_customer_input: '16. März',

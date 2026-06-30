@@ -226,6 +226,7 @@ const MONTH_WORDS: Record<string, number> = {
 const HOUSE_NUMBER_SUFFIX_WORDS = new Set(['a', 'b', 'c', 'd', 'alpha', 'beta']);
 const YES_WORDS = ['ja', 'jawohl', 'stimmt', 'genau', 'korrekt', 'richtig', 'das stimmt'];
 const FUNCTION_RESULT_LIKE_INPUTS = ['valid', 'true', 'false', 'found', 'not_found', 'kein kunde gefunden'];
+const NEUKUNDE_PHRASES = ['ich bin neukunde', 'neukunde', 'neu kunde', 'bin neu bei', 'noch kein kunde', 'bin ein neukunde'];
 const verificationSessions = new Map<string, VerificationSessionState>();
 
 function emptyAttempts(): VerificationSessionAttempts {
@@ -382,11 +383,66 @@ function normalizeLookupResult(value: unknown): 'found' | 'not_found' | 'error' 
   if (typeof value === 'object') {
     const record = value as Record<string, unknown>;
     const errorValue = asString(record.error) ?? asString(record.message);
-    if (errorValue && errorValue.toLowerCase().includes('kein kunde gefunden')) return 'not_found';
+    if (errorValue) {
+      if (errorValue.toLowerCase().includes('kein kunde gefunden')) return 'not_found';
+      return 'error';
+    }
     if ('id' in record || 'customer_id' in record) return 'found';
-    return 'found';
+    return undefined;
   }
   return undefined;
+}
+
+function mergeNormalizedLookupResult(
+  rawInput: unknown,
+  sessionValue: string | null | undefined,
+  defaultValue: 'found' | 'not_found' | 'error' | 'not_called' = 'not_called'
+): 'found' | 'not_found' | 'error' | 'not_called' {
+  if (rawInput !== undefined) {
+    const normalized = normalizeLookupResult(rawInput);
+    if (normalized !== undefined) return normalized;
+  }
+  if (sessionValue !== undefined && sessionValue !== null) {
+    const normalized = normalizeLookupResult(sessionValue);
+    if (normalized !== undefined) return normalized;
+  }
+  return defaultValue;
+}
+
+function mergeNormalizedCheckBirthdayResult(
+  rawInput: unknown,
+  sessionValue: string | null | undefined
+): 'success' | 'failed' | 'error' | 'not_called' {
+  if (rawInput !== undefined) {
+    const normalized = normalizeCheckBirthdayResult(rawInput);
+    if (normalized !== undefined) return normalized;
+  }
+  if (sessionValue !== undefined && sessionValue !== null) {
+    const normalized = normalizeCheckBirthdayResult(sessionValue);
+    if (normalized !== undefined) return normalized;
+  }
+  return 'not_called';
+}
+
+function mergeNormalizedFormatResult(
+  rawInput: unknown,
+  sessionValue: string | null | undefined
+): 'valid' | 'invalid' | 'error' | 'not_called' {
+  if (rawInput !== undefined) {
+    const normalized = normalizeFormatResult(rawInput);
+    if (normalized !== undefined) return normalized;
+  }
+  if (sessionValue !== undefined && sessionValue !== null) {
+    const normalized = normalizeFormatResult(sessionValue);
+    if (normalized !== undefined) return normalized;
+  }
+  return 'not_called';
+}
+
+function isNeukundeLike(text: string | undefined): boolean {
+  if (!text) return false;
+  const normalized = text.toLowerCase().trim();
+  return NEUKUNDE_PHRASES.some((phrase) => normalized.includes(phrase));
 }
 
 function normalizeCheckBirthdayResult(value: unknown): 'success' | 'failed' | 'error' | 'not_called' | undefined {
@@ -733,6 +789,20 @@ function buildPlzGebFunctionArgs(plz: string, house_number: string, birthday_cus
   return {
     function_arguments: { plz, hnr, bday },
     leaping_function_arguments: { plz, hnr, bday, house_number, birthday: birthday_customer },
+  };
+}
+
+function buildCheckBirthdayFunctionArgs(birthday_customer: string) {
+  return {
+    function_arguments: { birthday: birthday_customer },
+    leaping_function_arguments: { birthday: birthday_customer, bday: birthday_customer },
+  };
+}
+
+function buildInsuranceNumberFunctionArgs(insurance_number: string) {
+  return {
+    function_arguments: { insurance_number },
+    leaping_function_arguments: { insurance_number },
   };
 }
 
@@ -1093,15 +1163,16 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
     ...rawInput,
     phone_lookup_found: rawInput.phone_lookup_found ?? session?.phone_lookup_found ?? undefined,
     birthday_customer: birthdayMerge.value,
-    check_birthday_result:
-      rawInput.check_birthday_result ??
-      (session?.check_birthday_result as VerificationPhoneBrainInput['check_birthday_result'] | null) ??
-      'not_called',
+    check_birthday_result: mergeNormalizedCheckBirthdayResult(
+      rawInput.check_birthday_result,
+      session?.check_birthday_result
+    ),
     check_birthday_error: rawInput.check_birthday_error ?? session?.check_birthday_error ?? undefined,
     birthday_system_available: rawInput.birthday_system_available ?? undefined,
     birthday_request_count: rawInput.birthday_request_count ?? session?.attempts.birthday_collection_attempts ?? 0,
     birthday_check_attempts: rawInput.birthday_check_attempts ?? session?.attempts.birthday_check_attempts ?? 0,
   };
+  const checkBirthdayArgs = input.birthday_customer ? buildCheckBirthdayFunctionArgs(input.birthday_customer) : null;
 
   if (session) {
     session.phone_lookup_found = input.phone_lookup_found ?? session.phone_lookup_found;
@@ -1113,13 +1184,15 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
       session.pending_birthday_day = birthdayMerge.parse.day ?? null;
       session.pending_birthday_month = birthdayMerge.parse.month ?? null;
     }
-    if (rawInput.check_birthday_result) session.check_birthday_result = rawInput.check_birthday_result;
+    if (rawInput.check_birthday_result !== undefined) {
+      session.check_birthday_result = input.check_birthday_result ?? 'not_called';
+      if (input.check_birthday_result !== 'not_called') {
+        session.attempts.birthday_check_attempts += 1;
+      }
+    }
     if (rawInput.check_birthday_error) session.check_birthday_error = rawInput.check_birthday_error;
     if (rawInput.latest_customer_input && !birthdayMerge.value) {
       session.attempts.birthday_collection_attempts += 1;
-    }
-    if (rawInput.check_birthday_result && rawInput.check_birthday_result !== 'not_called') {
-      session.attempts.birthday_check_attempts += 1;
     }
   }
 
@@ -1258,6 +1331,8 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
     missing_fields: [],
     safety_flags: [],
     function_to_call: 'check_birthday',
+    function_arguments: checkBirthdayArgs?.function_arguments,
+    leaping_function_arguments: checkBirthdayArgs?.leaping_function_arguments,
   });
   saveSessionState(rawInput.session_id, session ?? emptySessionState());
   return finalizeGenericBrainResult(result, rawInput.session_id, session);
@@ -1270,14 +1345,37 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
     if (rawInput.phone_lookup_found !== undefined) session.phone_lookup_found = rawInput.phone_lookup_found;
   }
 
-  const latestText = getSpeechInput(rawInput.latest_customer_input, []);
+  const addressSafetyFlags: string[] = [];
+  const latestText = getSpeechInput(rawInput.latest_customer_input, addressSafetyFlags);
+
+  if (isNeukundeLike(rawInput.latest_customer_input)) {
+    return finalizeAddressBrainResult(
+      makeResult('address', {
+        ok: false,
+        next_action: 'TRANSITION_NICHT_IDENTIFIZIERT',
+        say: 'Für Neukunden gelten andere Abläufe. Ich kann Sie in diesem Verifizierungsschritt leider nicht identifizieren.',
+        reason: 'Customer stated they are a new customer, so address verification cannot continue.',
+        missing_fields: [],
+        safety_flags: [...addressSafetyFlags, 'customer_is_neukunde'],
+        transition_to: 'nicht_identifiziert',
+        awaiting_field: null,
+      }),
+      {
+        sessionId: rawInput.session_id,
+        state: session,
+        awaiting_field: null,
+        addressInput: rawInput,
+      }
+    );
+  }
+
   const basePlz = rawInput.plz ?? session?.plz ?? undefined;
   const baseHouseNumber = rawInput.house_number ?? session?.house_number ?? undefined;
   const baseBirthday = rawInput.birthday_customer ?? session?.birthday_customer ?? undefined;
-  const baseLookupResult =
-    rawInput.get_customer_by_plz_geb_result ??
-    (session?.get_customer_by_plz_geb_result as VerificationAddressBrainInput['get_customer_by_plz_geb_result'] | null) ??
-    'not_called';
+  const baseLookupResult = mergeNormalizedLookupResult(
+    rawInput.get_customer_by_plz_geb_result,
+    session?.get_customer_by_plz_geb_result
+  );
   const baseLookupAttempts = rawInput.address_lookup_attempts ?? session?.attempts.address_lookup_attempts ?? 0;
 
   const awaitingField = resolveAddressAwaitingField({
@@ -1323,12 +1421,15 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
     result: VerificationMethodBrainResult,
     nextAwaiting: AddressAwaitingField | null
   ): VerificationMethodBrainResult =>
-    finalizeAddressBrainResult(result, {
-      sessionId: rawInput.session_id,
-      state: session,
-      awaiting_field: nextAwaiting,
-      addressInput: input,
-    });
+    finalizeAddressBrainResult(
+      { ...result, safety_flags: [...addressSafetyFlags, ...result.safety_flags] },
+      {
+        sessionId: rawInput.session_id,
+        state: session,
+        awaiting_field: nextAwaiting,
+        addressInput: input,
+      }
+    );
 
   if (session) {
     session.phone_lookup_found = input.phone_lookup_found ?? session.phone_lookup_found;
@@ -1348,9 +1449,9 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
     } else if (rawInput.latest_customer_input && awaitingField === 'birthday_customer' && !birthdayMerge.value) {
       session.attempts.birthday_collection_attempts += 1;
     }
-    if (rawInput.get_customer_by_plz_geb_result) {
-      session.get_customer_by_plz_geb_result = rawInput.get_customer_by_plz_geb_result;
-      if (rawInput.get_customer_by_plz_geb_result !== 'not_called') {
+    if (rawInput.get_customer_by_plz_geb_result !== undefined) {
+      session.get_customer_by_plz_geb_result = input.get_customer_by_plz_geb_result ?? 'not_called';
+      if (input.get_customer_by_plz_geb_result !== 'not_called') {
         session.attempts.address_lookup_attempts += 1;
       }
     }
@@ -1564,6 +1665,23 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
   }
   const extraSafetyFlags: string[] = [];
   const latestText = getSpeechInput(rawInput.latest_customer_input, extraSafetyFlags);
+
+  if (isNeukundeLike(rawInput.latest_customer_input)) {
+    return finalizeGenericBrainResult(
+      makeResult('vnr', {
+        ok: false,
+        next_action: 'TRANSITION_NICHT_IDENTIFIZIERT',
+        say: 'Für Neukunden gelten andere Abläufe. Ich kann Sie in diesem Verifizierungsschritt leider nicht identifizieren.',
+        reason: 'Customer stated they are a new customer, so VNR verification cannot continue.',
+        missing_fields: [],
+        safety_flags: [...extraSafetyFlags, 'customer_is_neukunde'],
+        transition_to: 'nicht_identifiziert',
+      }),
+      rawInput.session_id,
+      session
+    );
+  }
+
   const latestCandidate = latestText ? normalizeVnrLoose(latestText).candidate : undefined;
   const birthdayMerge = mergeBirthday(
     rawInput.birthday_customer ?? session?.birthday_customer ?? undefined,
@@ -1581,24 +1699,26 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
         ? true
         : rawInput.vnr_confirmed ?? session?.vnr_confirmed ?? undefined,
     birthday_customer: birthdayMerge.value,
-    check_insurance_number_format_result:
-      rawInput.check_insurance_number_format_result ??
-      (session?.check_insurance_number_format_result as VerificationVnrBrainInput['check_insurance_number_format_result'] | null) ??
-      'not_called',
-    get_customer_by_insurance_number_result:
-      rawInput.get_customer_by_insurance_number_result ??
-      (session?.get_customer_by_insurance_number_result as VerificationVnrBrainInput['get_customer_by_insurance_number_result'] | null) ??
-      'not_called',
-    check_birthday_result:
-      rawInput.check_birthday_result ??
-      (session?.check_birthday_result as VerificationVnrBrainInput['check_birthday_result'] | null) ??
-      'not_called',
+    check_insurance_number_format_result: mergeNormalizedFormatResult(
+      rawInput.check_insurance_number_format_result,
+      session?.check_insurance_number_format_result
+    ),
+    get_customer_by_insurance_number_result: mergeNormalizedLookupResult(
+      rawInput.get_customer_by_insurance_number_result,
+      session?.get_customer_by_insurance_number_result
+    ),
+    check_birthday_result: mergeNormalizedCheckBirthdayResult(
+      rawInput.check_birthday_result,
+      session?.check_birthday_result
+    ),
     check_birthday_error: rawInput.check_birthday_error ?? session?.check_birthday_error ?? undefined,
     vnr_request_count: rawInput.vnr_request_count ?? session?.attempts.vnr_request_attempts ?? 0,
     vnr_lookup_attempts: rawInput.vnr_lookup_attempts ?? session?.attempts.vnr_lookup_attempts ?? 0,
     birthday_request_count: rawInput.birthday_request_count ?? session?.attempts.birthday_collection_attempts ?? 0,
     birthday_check_attempts: rawInput.birthday_check_attempts ?? session?.attempts.birthday_check_attempts ?? 0,
   };
+  const insuranceNumberArgs = input.vnr_candidate ? buildInsuranceNumberFunctionArgs(input.vnr_candidate) : null;
+  const checkBirthdayArgs = input.birthday_customer ? buildCheckBirthdayFunctionArgs(input.birthday_customer) : null;
   const finalize = (result: VerificationMethodBrainResult) =>
     finalizeGenericBrainResult(
       { ...result, safety_flags: [...extraSafetyFlags, ...result.safety_flags] },
@@ -1617,18 +1737,18 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
       session.pending_birthday_day = birthdayMerge.parse.day ?? null;
       session.pending_birthday_month = birthdayMerge.parse.month ?? null;
     }
-    if (rawInput.check_insurance_number_format_result) {
-      session.check_insurance_number_format_result = rawInput.check_insurance_number_format_result;
+    if (rawInput.check_insurance_number_format_result !== undefined) {
+      session.check_insurance_number_format_result = input.check_insurance_number_format_result ?? 'not_called';
     }
-    if (rawInput.get_customer_by_insurance_number_result) {
-      session.get_customer_by_insurance_number_result = rawInput.get_customer_by_insurance_number_result;
-      if (rawInput.get_customer_by_insurance_number_result !== 'not_called') {
+    if (rawInput.get_customer_by_insurance_number_result !== undefined) {
+      session.get_customer_by_insurance_number_result = input.get_customer_by_insurance_number_result ?? 'not_called';
+      if (input.get_customer_by_insurance_number_result !== 'not_called') {
         session.attempts.vnr_lookup_attempts += 1;
       }
     }
-    if (rawInput.check_birthday_result) {
-      session.check_birthday_result = rawInput.check_birthday_result;
-      if (rawInput.check_birthday_result !== 'not_called') {
+    if (rawInput.check_birthday_result !== undefined) {
+      session.check_birthday_result = input.check_birthday_result ?? 'not_called';
+      if (input.check_birthday_result !== 'not_called') {
         session.attempts.birthday_check_attempts += 1;
       }
     }
@@ -1718,6 +1838,8 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
       missing_fields: [],
       safety_flags: [],
       function_to_call: 'check_insurance_number_format',
+      function_arguments: insuranceNumberArgs?.function_arguments,
+      leaping_function_arguments: insuranceNumberArgs?.leaping_function_arguments,
     });
     return finalize(result);
   }
@@ -1767,6 +1889,8 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
       missing_fields: [],
       safety_flags: ['blocked_check_birthday_before_customer_lookup'],
       function_to_call: 'get_customer_by_insurance_number',
+      function_arguments: insuranceNumberArgs?.function_arguments,
+      leaping_function_arguments: insuranceNumberArgs?.leaping_function_arguments,
     });
     return finalize(result);
   }
@@ -1907,6 +2031,8 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
     missing_fields: [],
     safety_flags: [],
     function_to_call: 'check_birthday',
+    function_arguments: checkBirthdayArgs?.function_arguments,
+    leaping_function_arguments: checkBirthdayArgs?.leaping_function_arguments,
   });
   return finalize(result);
 }
