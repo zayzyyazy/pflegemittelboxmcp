@@ -103,22 +103,62 @@ Email delivery currently supports Gmail SMTP and Resend. If LLM drafting is enab
 
 ## Clone verification experiment
 
-For Marie clone testing, the verification flow can use three narrow MCP brains as deterministic step controllers:
+For Marie **clone testing only** (not production Marie), the verification flow can use three narrow MCP brains as deterministic step controllers:
 
 - Phone method -> `pmb_verification_phone_brain`
 - Address method -> `pmb_verification_address_brain`
 - VNR method -> `pmb_verification_vnr_brain`
 
-The clone should ask the MCP what to do next and follow `next_action` exactly.
+The clone should ask the MCP what to do next and follow `action_type` / `next_action` exactly.
 
-Recommended integration pattern:
+### Leaping clone setup (recommended)
 
-- On the first verification MCP call, always pass `phone_lookup_found` from the real `get_customer_by_phone` result.
-- Pass `latest_customer_input` only as the customer's answer to the current verification question.
-- Do not pass the customer's Anliegen, requested month, or general request text as `latest_customer_input`.
-- If available, pass a stable `session_id` / call ID so the verification brains can reuse stored PLZ, house number, birthday, VNR, and function results across turns.
+Leaping exposes stable reserved conversation fields:
+
+- `leaping_conversation_id`
+- `leaping_conversation_id_hex`
+- `leaping_conversation_id_int`
+
+For deterministic verification, prefer a **Leaping Function node** for MCP brain calls (not free-form LLM tool invocation) and bind tool arguments like this:
+
+| MCP argument | Leaping binding |
+|---|---|
+| `session_id` | `leaping_conversation_id_hex` |
+| `latest_customer_input` | latest customer utterance for the current verification question |
+| `phone_lookup_found` | result of `get_customer_by_phone` |
+| function result fields | native function output from the previous turn |
+
+Rules:
+
+- **Use** `session_id = leaping_conversation_id_hex` on every MCP brain call in the same conversation.
+- **Do not** use MCP tool-call IDs (`call_...`) as `session_id`; they change per invocation and break memory.
+- **Use** `function_arguments` verbatim for native Leaping function calls when MCP returns `action_type = CALL_FUNCTION`.
+- **If** `session_id` is missing, MCP runs in `stateless` mode, sets `missing_session_id`, and returns `known_values_required_next_call` — Leaping must echo those known values on the next turn.
+
+On the first verification MCP call, always pass `phone_lookup_found` from the real `get_customer_by_phone` result.
+
+Pass `latest_customer_input` only as the customer's answer to the current verification question. Do not pass the customer's Anliegen, requested month, or general request text as `latest_customer_input`.
 
 Important: the MCP only reduces wrong-order decisions if it is used as a gatekeeper. If all native Leaping functions stay enabled in one large stage, Marie can still call functions in the wrong order. The safer setup is to restrict enabled native functions per clone stage so the clone can only execute the function that the MCP brain explicitly allows.
+
+### Clone verification test guidance
+
+Run the focused Leaping integration checks before merging clone-brain changes:
+
+```bash
+cd server
+node --import tsx --test src/tools/verification-leaping-integration.test.ts
+node --import tsx --test src/tools/verification-brain-scenarios.test.ts
+SCENARIO_STRICT=1 node --import tsx --test src/tools/verification-brain-scenarios.test.ts
+```
+
+The 20-test Leaping integration file covers:
+
+- stable `leaping_conversation_id_hex`-style session persistence
+- stateless fallback with `known_values_required_next_call`
+- rejection of fake per-call `call_...` session IDs
+- normalized `function_arguments` / `leaping_function_arguments`
+- phone/VNR result normalization and cross-path address → VNR birthday reuse
 
 ## Local development
 
