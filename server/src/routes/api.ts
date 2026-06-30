@@ -30,6 +30,7 @@ import {
   runVerificationPhoneBrain,
   runVerificationVnrBrain,
 } from '../tools/verification-method-brains.js';
+import { toDashboardVerificationBrainResponse } from '../tools/verification-brain-response.js';
 import {
   coerceVerificationBrainInput,
   runVerificationBrain,
@@ -404,16 +405,22 @@ apiRouter.post('/tools/:name/test', async (req, res) => {
         coerceDebugEchoSessionInput(input as Record<string, unknown>)
       );
     } else if (name === 'pmb_verification_phone_brain') {
-      output = runVerificationPhoneBrain(
-        coerceVerificationPhoneBrainInput(input as Record<string, unknown>)
+      output = toDashboardVerificationBrainResponse(
+        runVerificationPhoneBrain(
+          coerceVerificationPhoneBrainInput(input as Record<string, unknown>)
+        )
       );
     } else if (name === 'pmb_verification_address_brain') {
-      output = runVerificationAddressBrain(
-        coerceVerificationAddressBrainInput(input as Record<string, unknown>)
+      output = toDashboardVerificationBrainResponse(
+        runVerificationAddressBrain(
+          coerceVerificationAddressBrainInput(input as Record<string, unknown>)
+        )
       );
     } else if (name === 'pmb_verification_vnr_brain') {
-      output = runVerificationVnrBrain(
-        coerceVerificationVnrBrainInput(input as Record<string, unknown>)
+      output = toDashboardVerificationBrainResponse(
+        runVerificationVnrBrain(
+          coerceVerificationVnrBrainInput(input as Record<string, unknown>)
+        )
       );
     } else if (name === 'pmb_verification_brain') {
       output = runVerificationBrain(coerceVerificationBrainInput(input as Record<string, unknown>));

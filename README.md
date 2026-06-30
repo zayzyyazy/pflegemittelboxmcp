@@ -109,7 +109,30 @@ For Marie **clone testing only** (not production Marie), the verification flow c
 - Address method -> `pmb_verification_address_brain`
 - VNR method -> `pmb_verification_vnr_brain`
 
-The clone should ask the MCP what to do next and follow `action_type` / `next_action` exactly.
+The clone should ask the MCP what to do next and follow `action_type` exactly. Marie receives a **minimal controller object** from the three verification brains; full debug stays in MCP logs and the operator dashboard.
+
+### Controller vs debug response split
+
+**Leaping MCP** (`pmb_verification_phone_brain`, `pmb_verification_address_brain`, `pmb_verification_vnr_brain`) returns only:
+
+```json
+{
+  "ok": true,
+  "action_type": "CALL_FUNCTION",
+  "say": "",
+  "function_name": "get_customer_by_plz_geb",
+  "function_arguments": { "plz": "41372", "hnr": "100", "bday": "1956-03-16" },
+  "transition_name": null,
+  "requires_followup_mcp_call": true,
+  "active_brain": "address",
+  "session_id_received": true,
+  "session_mode": "session"
+}
+```
+
+**Dashboard / SQLite logs** retain `{ "controller": { ... }, "debug": { ... } }` with `stored_values`, `attempts`, `reason`, `next_action`, `safety_flags`, `known_values_required_next_call`, etc.
+
+Do not rely on Leaping seeing `stored_values` or raw native lookup payloads — bind function results into the next MCP input instead.
 
 ### Leaping clone setup (recommended)
 

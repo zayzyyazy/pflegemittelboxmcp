@@ -32,6 +32,11 @@ import {
   runVerificationPhoneBrain,
   runVerificationVnrBrain,
 } from './tools/verification-method-brains.js';
+import {
+  toDashboardVerificationBrainResponse,
+  toLeapingVerificationBrainResponse,
+  toLoggedVerificationBrainResponse,
+} from './tools/verification-brain-response.js';
 import { runVerificationBrain } from './tools/verification-brain.js';
 import { logCall } from './db.js';
 
@@ -189,8 +194,11 @@ export function createMcpServer(): McpServer {
       const start = Date.now();
       const coerced = coerceVerificationPhoneBrainInput(input);
       const result = runVerificationPhoneBrain(coerced);
-      logCall('pmb_verification_phone_brain', coerced, result, null, Date.now() - start);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      const logged = toLoggedVerificationBrainResponse(result);
+      logCall('pmb_verification_phone_brain', coerced, logged, null, Date.now() - start);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(toLeapingVerificationBrainResponse(result), null, 2) }],
+      };
     }
   );
 
@@ -215,8 +223,11 @@ export function createMcpServer(): McpServer {
       const start = Date.now();
       const coerced = coerceVerificationAddressBrainInput(input);
       const result = runVerificationAddressBrain(coerced);
-      logCall('pmb_verification_address_brain', coerced, result, null, Date.now() - start);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      const logged = toLoggedVerificationBrainResponse(result);
+      logCall('pmb_verification_address_brain', coerced, logged, null, Date.now() - start);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(toLeapingVerificationBrainResponse(result), null, 2) }],
+      };
     }
   );
 
@@ -250,8 +261,11 @@ export function createMcpServer(): McpServer {
       const start = Date.now();
       const coerced = coerceVerificationVnrBrainInput(input);
       const result = runVerificationVnrBrain(coerced);
-      logCall('pmb_verification_vnr_brain', coerced, result, null, Date.now() - start);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      const logged = toLoggedVerificationBrainResponse(result);
+      logCall('pmb_verification_vnr_brain', coerced, logged, null, Date.now() - start);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(toLeapingVerificationBrainResponse(result), null, 2) }],
+      };
     }
   );
 

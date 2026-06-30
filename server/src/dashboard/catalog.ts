@@ -26,6 +26,7 @@ import {
   runVerificationPhoneBrain,
   runVerificationVnrBrain,
 } from '../tools/verification-method-brains.js';
+import { toDashboardVerificationBrainResponse } from '../tools/verification-brain-response.js';
 import {
   coerceVerificationBrainInput,
   runVerificationBrain,
@@ -270,11 +271,17 @@ export async function runDashboardTool(name: string, input: Record<string, unkno
     } else if (name === 'pmb_debug_echo_session') {
       output = runDebugEchoSession(coerceDebugEchoSessionInput(input));
     } else if (name === 'pmb_verification_phone_brain') {
-      output = runVerificationPhoneBrain(coerceVerificationPhoneBrainInput(input));
+      output = toDashboardVerificationBrainResponse(
+        runVerificationPhoneBrain(coerceVerificationPhoneBrainInput(input))
+      );
     } else if (name === 'pmb_verification_address_brain') {
-      output = runVerificationAddressBrain(coerceVerificationAddressBrainInput(input));
+      output = toDashboardVerificationBrainResponse(
+        runVerificationAddressBrain(coerceVerificationAddressBrainInput(input))
+      );
     } else if (name === 'pmb_verification_vnr_brain') {
-      output = runVerificationVnrBrain(coerceVerificationVnrBrainInput(input));
+      output = toDashboardVerificationBrainResponse(
+        runVerificationVnrBrain(coerceVerificationVnrBrainInput(input))
+      );
     } else if (name === 'pmb_verification_brain') {
       output = runVerificationBrain(coerceVerificationBrainInput(input));
     } else if (name === 'pmb_delivery_status_reasoner') {
