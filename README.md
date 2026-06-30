@@ -170,10 +170,13 @@ Run the focused Leaping integration checks before merging clone-brain changes:
 ```bash
 cd server
 node --import tsx --test src/tools/verification-leaping-session-id.test.ts
+node --import tsx --test src/tools/verification-brain-stress.test.ts
 node --import tsx --test src/tools/verification-leaping-integration.test.ts
 node --import tsx --test src/tools/verification-brain-scenarios.test.ts
 SCENARIO_STRICT=1 node --import tsx --test src/tools/verification-brain-scenarios.test.ts
 ```
+
+The stress harness (`verification-brain-stress.test.ts`) runs 40 ugly multi-turn sequences with stable session IDs — wrong answers, retries, path switches, and cross-brain noise. It fails CI when any scenario allows an illegal function, corrupts stored values, or picks the wrong final action.
 
 The session-id contract file (`verification-leaping-session-id.test.ts`) covers:
 

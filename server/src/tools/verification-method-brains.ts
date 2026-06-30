@@ -707,7 +707,10 @@ function parseHouseNumber(rawText: string | undefined): string | undefined {
   };
 
   if (cueIndex !== -1) {
-    return tryParseAt(cueIndex + 1, true);
+    for (let i = cueIndex + 1; i < tokens.length; i += 1) {
+      const parsed = parseNumberFromTokenWindow(tokens, i);
+      if (parsed.value) return parsed.value;
+    }
   }
 
   for (let i = 0; i < tokens.length; i += 1) {
@@ -777,7 +780,28 @@ function parseAddressFieldFromUtterance(
   }
 
   if (awaitingField === 'birthday_customer') {
+    if (rawText.toLowerCase().includes('nein')) {
+      const house_number = parseHouseNumberFromUtterance(rawText);
+      if (house_number) return { house_number };
+    }
     return { birthdayMerge: mergeBirthday(existingBirthday, rawText, pendingDay, pendingMonth) };
+  }
+
+  if (awaitingField === 'confirm_address') {
+    const parsed: {
+      plz?: string;
+      house_number?: string;
+      birthdayMerge?: ReturnType<typeof mergeBirthday>;
+    } = {};
+    const plz = parsePlz(rawText);
+    if (plz && /^\d{5}$/.test(plz)) parsed.plz = plz;
+    const house_number = parseHouseNumberFromUtterance(rawText);
+    if (house_number) parsed.house_number = house_number;
+    const birthdayMerge = mergeBirthday(existingBirthday, rawText, pendingDay, pendingMonth);
+    if (birthdayMerge.parse.status === 'complete' && birthdayMerge.value) {
+      parsed.birthdayMerge = birthdayMerge;
+    }
+    return parsed;
   }
 
   return {};
@@ -1152,7 +1176,9 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
     if (rawInput.phone_lookup_found !== undefined) session.phone_lookup_found = rawInput.phone_lookup_found;
   }
 
-  const latestText = rawInput.latest_customer_input;
+  const phoneSafetyFlags: string[] = [];
+  const latestText = getSpeechInput(rawInput.latest_customer_input, phoneSafetyFlags);
+
   const birthdayMerge = mergeBirthday(
     rawInput.birthday_customer ?? session?.birthday_customer ?? undefined,
     latestText,
@@ -1173,6 +1199,12 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
     birthday_check_attempts: rawInput.birthday_check_attempts ?? session?.attempts.birthday_check_attempts ?? 0,
   };
   const checkBirthdayArgs = input.birthday_customer ? buildCheckBirthdayFunctionArgs(input.birthday_customer) : null;
+  const finalizePhone = (result: VerificationMethodBrainResult) =>
+    finalizeGenericBrainResult(
+      { ...result, safety_flags: [...phoneSafetyFlags, ...result.safety_flags] },
+      rawInput.session_id,
+      session
+    );
 
   if (session) {
     session.phone_lookup_found = input.phone_lookup_found ?? session.phone_lookup_found;
@@ -1196,32 +1228,42 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
     }
   }
 
+  if (
+    rawInput.latest_customer_input &&
+    input.birthday_customer &&
+    input.check_birthday_result === 'failed' &&
+    (input.birthday_check_attempts ?? 0) < 2
+  ) {
+    input.check_birthday_result = 'not_called';
+    if (session) session.check_birthday_result = 'not_called';
+  }
+
   const transfer = maybeTransferHuman('phone', input.customer_requested_human, input.office_hours);
   if (transfer) {
     saveSessionState(rawInput.session_id, session ?? emptySessionState());
-    return finalizeGenericBrainResult(transfer, rawInput.session_id, session);
+    return finalizePhone(transfer);
   }
 
   if (input.phone_lookup_found !== true) {
-    return finalizeGenericBrainResult(makeResult('phone', {
+    return finalizePhone(makeResult('phone', {
       ok: false,
       next_action: 'WRONG_METHOD',
       say: '',
       reason: 'Phone verification brain can only be used after get_customer_by_phone found a customer.',
       missing_fields: [],
       safety_flags: ['wrong_method_phone_lookup_not_found'],
-    }), rawInput.session_id, session);
+    }));
   }
 
   if (isMissingBirthdaySystem(input.check_birthday_error)) {
-    return finalizeGenericBrainResult(makeResult('phone', {
+    return finalizePhone(makeResult('phone', {
       ok: false,
       next_action: 'TECHNICAL_ESCALATION',
       say: 'Es gibt gerade ein technisches Problem bei der Verifizierung. Ich gebe das intern weiter.',
       reason: 'Birthday verification cannot run because birthday_system is missing.',
       missing_fields: ['birthday_system'],
       safety_flags: ['missing_birthday_system', 'block_birthday_loop'],
-    }), rawInput.session_id, session);
+    }));
   }
 
   if (birthdayMerge.parse.status === 'incomplete_year') {
@@ -1234,23 +1276,23 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
       safety_flags: [],
     });
     saveSessionState(rawInput.session_id, session ?? emptySessionState());
-    return finalizeGenericBrainResult(result, rawInput.session_id, session);
+    return finalizePhone(result);
   }
 
   if (birthdayMerge.parse.status === 'impossible') {
-    return finalizeGenericBrainResult(makeResult('phone', {
+    return finalizePhone(makeResult('phone', {
       ok: false,
       next_action: 'ASK_BIRTHDAY',
       say: 'Das Geburtsdatum konnte ich so nicht verarbeiten. Bitte nennen Sie es noch einmal vollständig.',
       reason: birthdayMerge.parse.reason ?? 'Birthday was impossible or ambiguous.',
       missing_fields: ['birthday_customer'],
       safety_flags: ['birthday_invalid'],
-    }), rawInput.session_id, session);
+    }));
   }
 
   if (!input.birthday_customer) {
     if ((input.birthday_request_count ?? 0) >= 2) {
-      return finalizeGenericBrainResult(makeResult('phone', {
+      return finalizePhone(makeResult('phone', {
         ok: false,
         next_action: 'TRANSITION_NICHT_IDENTIFIZIERT',
         say: 'Ich konnte Sie leider nicht eindeutig verifizieren.',
@@ -1258,7 +1300,7 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
         missing_fields: ['birthday_customer'],
         safety_flags: ['birthday_request_limit_reached'],
         transition_to: 'nicht_identifiziert',
-      }), rawInput.session_id, session);
+      }));
     }
 
     const result = makeResult('phone', {
@@ -1273,11 +1315,11 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
       safety_flags: [],
     });
     saveSessionState(rawInput.session_id, session ?? emptySessionState());
-    return finalizeGenericBrainResult(result, rawInput.session_id, session);
+    return finalizePhone(result);
   }
 
   if (input.check_birthday_result === 'success') {
-    return finalizeGenericBrainResult(makeResult('phone', {
+    return finalizePhone(makeResult('phone', {
       ok: true,
       next_action: 'TRANSITION_WEITER',
       say: 'Danke, die Verifizierung ist abgeschlossen.',
@@ -1285,12 +1327,12 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
       missing_fields: [],
       safety_flags: [],
       transition_to: 'weiter',
-    }), rawInput.session_id, session);
+    }));
   }
 
   if (input.check_birthday_result === 'failed') {
     if ((input.birthday_check_attempts ?? 0) >= 2 || (input.birthday_request_count ?? 0) >= 2) {
-      return finalizeGenericBrainResult(makeResult('phone', {
+      return finalizePhone(makeResult('phone', {
         ok: false,
         next_action: 'TRANSITION_NICHT_IDENTIFIZIERT',
         say: 'Ich konnte Sie leider nicht eindeutig verifizieren.',
@@ -1298,7 +1340,7 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
         missing_fields: [],
         safety_flags: ['birthday_check_limit_reached'],
         transition_to: 'nicht_identifiziert',
-      }), rawInput.session_id, session);
+      }));
     }
 
     const result = makeResult('phone', {
@@ -1310,18 +1352,18 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
       safety_flags: ['birthday_retry'],
     });
     saveSessionState(rawInput.session_id, session ?? emptySessionState());
-    return finalizeGenericBrainResult(result, rawInput.session_id, session);
+    return finalizePhone(result);
   }
 
   if (input.birthday_system_available === false) {
-    return finalizeGenericBrainResult(makeResult('phone', {
+    return finalizePhone(makeResult('phone', {
       ok: false,
       next_action: 'TECHNICAL_ESCALATION',
       say: 'Es gibt gerade ein technisches Problem bei der Verifizierung. Ich gebe das intern weiter.',
       reason: 'Birthday system is unavailable, so check_birthday is not safe to call.',
       missing_fields: ['birthday_system'],
       safety_flags: ['missing_birthday_system', 'block_birthday_loop'],
-    }), rawInput.session_id, session);
+    }));
   }
   const result = makeResult('phone', {
     ok: true,
@@ -1335,7 +1377,7 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
     leaping_function_arguments: checkBirthdayArgs?.leaping_function_arguments,
   });
   saveSessionState(rawInput.session_id, session ?? emptySessionState());
-  return finalizeGenericBrainResult(result, rawInput.session_id, session);
+  return finalizePhone(result);
 }
 
 export function runVerificationAddressBrain(rawInput: VerificationAddressBrainInput): VerificationMethodBrainResult {
@@ -1372,7 +1414,7 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
   const basePlz = rawInput.plz ?? session?.plz ?? undefined;
   const baseHouseNumber = rawInput.house_number ?? session?.house_number ?? undefined;
   const baseBirthday = rawInput.birthday_customer ?? session?.birthday_customer ?? undefined;
-  const baseLookupResult = mergeNormalizedLookupResult(
+  const mergedLookupResult = mergeNormalizedLookupResult(
     rawInput.get_customer_by_plz_geb_result,
     session?.get_customer_by_plz_geb_result
   );
@@ -1382,21 +1424,26 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
     plz: basePlz,
     house_number: baseHouseNumber,
     birthday_customer: baseBirthday,
-    get_customer_by_plz_geb_result: baseLookupResult,
+    get_customer_by_plz_geb_result: mergedLookupResult,
     address_lookup_attempts: baseLookupAttempts,
     sessionAwaiting: session?.awaiting_field,
   });
 
-  const parsedFromLatest =
-    awaitingField === 'confirm_address'
-      ? {}
-      : parseAddressFieldFromUtterance(
-          awaitingField,
-          latestText,
-          baseBirthday,
-          session?.pending_birthday_day,
-          session?.pending_birthday_month
-        );
+  const parsedFromLatest = parseAddressFieldFromUtterance(
+    awaitingField,
+    latestText,
+    baseBirthday,
+    session?.pending_birthday_day,
+    session?.pending_birthday_month
+  );
+
+  const correctedOnConfirm =
+    awaitingField === 'confirm_address' &&
+    Boolean(rawInput.latest_customer_input) &&
+    !isYesLike(latestText) &&
+    Boolean(parsedFromLatest.plz || parsedFromLatest.house_number || parsedFromLatest.birthdayMerge?.value);
+
+  const baseLookupResult = correctedOnConfirm ? 'not_called' : mergedLookupResult;
 
   const birthdayMerge =
     parsedFromLatest.birthdayMerge ??
@@ -1454,6 +1501,8 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
       if (input.get_customer_by_plz_geb_result !== 'not_called') {
         session.attempts.address_lookup_attempts += 1;
       }
+    } else if (correctedOnConfirm) {
+      session.get_customer_by_plz_geb_result = 'not_called';
     }
   }
 
@@ -1759,6 +1808,16 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
     if (rawInput.latest_customer_input && input.get_customer_by_insurance_number_result === 'found' && !birthdayMerge.value) {
       session.attempts.birthday_collection_attempts += 1;
     }
+  }
+
+  if (
+    rawInput.latest_customer_input &&
+    input.birthday_customer &&
+    input.check_birthday_result === 'failed' &&
+    (input.birthday_check_attempts ?? 0) < 2
+  ) {
+    input.check_birthday_result = 'not_called';
+    if (session) session.check_birthday_result = 'not_called';
   }
 
   const transfer = maybeTransferHuman('vnr', input.customer_requested_human, input.office_hours);
