@@ -170,13 +170,15 @@ On the first verification MCP call, always pass `phone_lookup_found` from the re
 
 Pass `latest_customer_input` only as the customer's answer to the current verification question. Do not pass the customer's Anliegen, requested month, or general request text as `latest_customer_input`.
 
-### Clone session-id smoke test (`pmb_debug_echo_session`)
+### Clone session-id smoke test (`pmb_debug_echo_session_only`)
 
-For a one-call Leaping clone smoke test before wiring verification brains, expose only `pmb_debug_echo_session` in a Function node and bind:
+For a one-call Leaping clone smoke test before wiring verification brains, expose only `pmb_debug_echo_session_only` in a Function node and bind:
 
 | MCP argument | Leaping binding |
 |---|---|
 | `session_id` | `leaping_conversation_id_hex` |
+
+This tool accepts **only** `session_id` — no `latest_customer_input`, PLZ, HNR, or birthday — so the Leaping LLM cannot hallucinate optional parameters.
 
 Example response when binding works:
 
@@ -184,13 +186,15 @@ Example response when binding works:
 {
   "ok": true,
   "received_session_id": "a1b2c3d4e5f6789012345678abcdef01",
-  "session_id_received": true,
-  "latest_customer_input": null,
-  "received_fields": { "session_id": "a1b2c3d4e5f6789012345678abcdef01", ... }
+  "session_id_received": true
 }
 ```
 
 Do **not** add this tool to production Marie. It is for clone MCP contract verification only.
+
+The older `pmb_debug_echo_session` (with optional PLZ/HNR/bday fields) remains available for dashboard debugging but is **not** recommended in Leaping Function nodes — optional schema fields tend to get LLM-filled with garbage.
+
+See `docs/leaping-clone-verification-prompt.md` for the rewritten Marie verification stage prompt aligned with the slim MCP controller contract.
 
 Important: the MCP only reduces wrong-order decisions if it is used as a gatekeeper. If all native Leaping functions stay enabled in one large stage, Marie can still call functions in the wrong order. The safer setup is to restrict enabled native functions per clone stage so the clone can only execute the function that the MCP brain explicitly allows.
 

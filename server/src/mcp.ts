@@ -22,7 +22,9 @@ import {
 import { parseAddressVerificationGuardrail } from './tools/address-verification-guardrail.js';
 import {
   coerceDebugEchoSessionInput,
+  coerceDebugEchoSessionOnlyInput,
   runDebugEchoSession,
+  runDebugEchoSessionOnly,
 } from './tools/debug-echo-session.js';
 import {
   coerceVerificationAddressBrainInput,
@@ -170,6 +172,22 @@ export function createMcpServer(): McpServer {
       const coerced = coerceDebugEchoSessionInput(input);
       const result = runDebugEchoSession(coerced);
       logCall('pmb_debug_echo_session', coerced, result, null, Date.now() - start);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'pmb_debug_echo_session_only',
+    'Clone-only session binding smoke test. Accepts only session_id — no optional fields. ' +
+      'Use instead of pmb_debug_echo_session in Leaping to verify session_id binding without LLM-filled extras.',
+    {
+      session_id: z.string().optional(),
+    },
+    async (input) => {
+      const start = Date.now();
+      const coerced = coerceDebugEchoSessionOnlyInput(input);
+      const result = runDebugEchoSessionOnly(coerced);
+      logCall('pmb_debug_echo_session_only', coerced, result, null, Date.now() - start);
       return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
     }
   );

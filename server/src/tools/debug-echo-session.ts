@@ -14,6 +14,16 @@ export interface DebugEchoSessionResult {
   received_fields: Record<string, string | null>;
 }
 
+export interface DebugEchoSessionOnlyInput {
+  session_id?: string;
+}
+
+export interface DebugEchoSessionOnlyResult {
+  ok: true;
+  received_session_id: string | null;
+  session_id_received: boolean;
+}
+
 function optionalString(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
@@ -34,6 +44,30 @@ export function coerceDebugEchoSessionInput(input: Record<string, unknown>): Deb
  * Clone-only debug helper: echoes what Leaping bound into the MCP tool call.
  * Do not wire into production Marie — use only in Leaping clone Function nodes.
  */
+export function coerceDebugEchoSessionOnlyInput(
+  input: Record<string, unknown>
+): DebugEchoSessionOnlyInput {
+  return {
+    session_id: optionalString(input.session_id),
+  };
+}
+
+/**
+ * Clone-only session binding smoke test: echoes only session_id.
+ * No optional fields — prevents Leaping LLM from hallucinating PLZ/HNR/bday.
+ */
+export function runDebugEchoSessionOnly(
+  input: DebugEchoSessionOnlyInput
+): DebugEchoSessionOnlyResult {
+  const session_id = input.session_id;
+
+  return {
+    ok: true,
+    received_session_id: session_id ?? null,
+    session_id_received: Boolean(session_id),
+  };
+}
+
 export function runDebugEchoSession(input: DebugEchoSessionInput): DebugEchoSessionResult {
   const session_id = input.session_id;
   const latest_customer_input = input.latest_customer_input;

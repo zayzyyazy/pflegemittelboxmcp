@@ -20,7 +20,9 @@ import { createMcpServer, sseTransports } from '../mcp.js';
 import { parseAddressVerificationGuardrail } from '../tools/address-verification-guardrail.js';
 import {
   coerceDebugEchoSessionInput,
+  coerceDebugEchoSessionOnlyInput,
   runDebugEchoSession,
+  runDebugEchoSessionOnly,
 } from '../tools/debug-echo-session.js';
 import {
   coerceDeliveryStatusReasonerInput,
@@ -137,6 +139,19 @@ const MCP_TOOLS = [
         plz: { type: 'string' },
         hnr: { type: 'string' },
         bday: { type: 'string' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'pmb_debug_echo_session_only',
+    description:
+      'Clone-only session binding smoke test. Accepts only session_id — no optional fields. ' +
+      'Use in Leaping to verify session_id binding without LLM-filled extras.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string' },
       },
       required: [],
     },
@@ -382,6 +397,13 @@ async function runTool(
       const input = coerceDebugEchoSessionInput(args);
       const result = runDebugEchoSession(input);
       logCall('pmb_debug_echo_session', input, result, null, Date.now() - start);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+
+    case 'pmb_debug_echo_session_only': {
+      const input = coerceDebugEchoSessionOnlyInput(args);
+      const result = runDebugEchoSessionOnly(input);
+      logCall('pmb_debug_echo_session_only', input, result, null, Date.now() - start);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
 

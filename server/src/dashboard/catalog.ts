@@ -3,7 +3,9 @@ import { logCall, recordPostCallAlertHistory } from '../db.js';
 import { parseAddressVerificationGuardrail } from '../tools/address-verification-guardrail.js';
 import {
   coerceDebugEchoSessionInput,
+  coerceDebugEchoSessionOnlyInput,
   runDebugEchoSession,
+  runDebugEchoSessionOnly,
 } from '../tools/debug-echo-session.js';
 import {
   coerceDeliveryStatusReasonerInput,
@@ -121,6 +123,21 @@ export const TOOL_DEFS = [
         plz: { type: 'string' },
         hnr: { type: 'string' },
         bday: { type: 'string' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'pmb_debug_echo_session_only',
+    description:
+      'Clone-only session binding smoke test. Accepts only session_id — no optional fields. ' +
+      'Use in Leaping to verify session_id binding without LLM-filled extras.',
+    category: 'debug',
+    safe: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string' },
       },
       required: [],
     },
@@ -270,6 +287,8 @@ export async function runDashboardTool(name: string, input: Record<string, unkno
       output = parseAddressVerificationGuardrail(guardrailInput);
     } else if (name === 'pmb_debug_echo_session') {
       output = runDebugEchoSession(coerceDebugEchoSessionInput(input));
+    } else if (name === 'pmb_debug_echo_session_only') {
+      output = runDebugEchoSessionOnly(coerceDebugEchoSessionOnlyInput(input));
     } else if (name === 'pmb_verification_phone_brain') {
       output = toDashboardVerificationBrainResponse(
         runVerificationPhoneBrain(coerceVerificationPhoneBrainInput(input))
