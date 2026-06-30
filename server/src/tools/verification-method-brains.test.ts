@@ -14,6 +14,8 @@ test('phone path asks birthday', () => {
   assert.equal(result.method, 'phone');
   assert.equal(result.next_action, 'ASK_BIRTHDAY');
   assert.deepEqual(result.missing_fields, ['birthday_customer']);
+  assert.equal(result.session_mode, 'stateless');
+  assert.ok(result.safety_flags.includes('missing_session_id'));
 });
 
 test('phone path stores birthday and handles missing year across session calls', () => {
@@ -182,6 +184,11 @@ test('address path stores PLZ, house number, and birthday across session calls',
   });
   assert.equal(third.next_action, 'CALL_GET_CUSTOMER_BY_PLZ_GEB');
   assert.equal(third.function_to_call, 'get_customer_by_plz_geb');
+  assert.deepEqual(third.function_arguments, {
+    plz: '41372',
+    house_number: '100',
+    birthday: '1956-03-16',
+  });
   assert.equal(third.stored_values?.plz, '41372');
   assert.equal(third.stored_values?.house_number, '100');
   assert.equal(third.stored_values?.birthday_customer, '1956-03-16');
@@ -205,6 +212,33 @@ test('address lookup not_found is stored and yes confirmation allows retry looku
   });
   assert.equal(second.next_action, 'CALL_GET_CUSTOMER_BY_PLZ_GEB');
   assert.equal(second.function_to_call, 'get_customer_by_plz_geb');
+});
+
+test('second address not_found falls back to VNR', () => {
+  const result = runVerificationAddressBrain({
+    session_id: 'address-second-fail',
+    plz: '41372',
+    house_number: '100',
+    birthday_customer: '1956-03-16',
+    get_customer_by_plz_geb_result: 'not_found',
+    address_lookup_attempts: 2,
+  });
+
+  assert.equal(result.next_action, 'FALLBACK_TO_VNR');
+});
+
+test('spoken PLZ and house number are normalized before function call', () => {
+  const result = runVerificationAddressBrain({
+    session_id: 'address-normalized',
+    latest_customer_input: 'Postleitzahl vier eins drei sieben zwei, Hausnummer einhundert, Geburtstag 16.03.1956',
+  });
+
+  assert.equal(result.next_action, 'CALL_GET_CUSTOMER_BY_PLZ_GEB');
+  assert.deepEqual(result.function_arguments, {
+    plz: '41372',
+    house_number: '100',
+    birthday: '1956-03-16',
+  });
 });
 
 test('VNR path confirms VNR before format check', () => {
@@ -282,6 +316,52 @@ test('VNR path stores candidate and accepts yes confirmation in later call', () 
   });
   assert.equal(second.next_action, 'CALL_CHECK_INSURANCE_NUMBER_FORMAT');
   assert.equal(second.stored_values?.vnr_confirmed, true);
+});
+
+test('latest_customer_input valid triggers warning and does not become customer speech', () => {
+  const result = runVerificationVnrBrain({
+    session_id: 'vnr-valid-warning',
+    vnr_candidate: 'L039359923',
+    vnr_confirmed: true,
+    latest_customer_input: 'valid',
+  });
+
+  assert.ok(result.safety_flags.includes('latest_customer_input_looks_like_function_result'));
+  assert.equal(result.next_action, 'CALL_CHECK_INSURANCE_NUMBER_FORMAT');
+});
+
+test('VNR digits-only candidate is rejected as missing leading letter', () => {
+  const result = runVerificationVnrBrain({
+    session_id: 'vnr-digits-only',
+    vnr_candidate: '039359923',
+  });
+
+  assert.equal(result.next_action, 'ASK_VNR_LETTER');
+});
+
+test('VNR valid format result moves to customer lookup', () => {
+  const result = runVerificationVnrBrain({
+    session_id: 'vnr-format-valid',
+    vnr_candidate: 'L039359923',
+    vnr_confirmed: true,
+    check_insurance_number_format_result: 'Valid!' as unknown as 'valid',
+  });
+
+  assert.equal(result.next_action, 'CALL_GET_CUSTOMER_BY_INSURANCE_NUMBER');
+});
+
+test('VNR found customer with stored birthday does not ask birthday again', () => {
+  const result = runVerificationVnrBrain({
+    session_id: 'vnr-bday-reuse',
+    vnr_candidate: 'L039359923',
+    vnr_confirmed: true,
+    check_insurance_number_format_result: 'valid',
+    get_customer_by_insurance_number_result: 'found',
+    birthday_customer: '1956-03-16',
+    birthday_system_available: true,
+  });
+
+  assert.equal(result.next_action, 'CALL_CHECK_BIRTHDAY');
 });
 
 test('stateless behavior still works without session_id', () => {
