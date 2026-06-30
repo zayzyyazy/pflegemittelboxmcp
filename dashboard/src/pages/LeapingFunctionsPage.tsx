@@ -6,6 +6,7 @@ export default function LeapingFunctionsPage() {
   const [fns, setFns] = useState<LeapingFunction[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'safe' | 'risky'>('all');
+  const [showTechnicalDetails, setShowTechnicalDetails] = useState(false);
 
   useEffect(() => {
     fetchLeapingFunctions()
@@ -44,6 +45,12 @@ export default function LeapingFunctionsPage() {
             {f === 'all' ? `All (${fns.length})` : f === 'safe' ? `✓ Safe (${fns.filter((x) => x.safe).length})` : `⚠ Risky (${fns.filter((x) => !x.safe).length})`}
           </button>
         ))}
+        <button
+          className={`btn btn-sm ${showTechnicalDetails ? 'btn-primary' : 'btn-ghost'}`}
+          onClick={() => setShowTechnicalDetails((value) => !value)}
+        >
+          {showTechnicalDetails ? 'Hide technical details' : 'Show technical details'}
+        </button>
       </div>
 
       <div className="card">
@@ -54,11 +61,11 @@ export default function LeapingFunctionsPage() {
                 <th>Function Name</th>
                 <th>Type</th>
                 <th>Method</th>
-                <th>URL / Endpoint</th>
                 <th>Parameters</th>
                 <th>Notes</th>
                 <th>Safe?</th>
                 <th>Prod-changing?</th>
+                {showTechnicalDetails ? <th>URL / Endpoint</th> : null}
               </tr>
             </thead>
             <tbody>
@@ -74,9 +81,6 @@ export default function LeapingFunctionsPage() {
                     <span className={`badge ${fn.method === 'GET' ? 'badge-safe' : 'badge-info'}`}>
                       {fn.method}
                     </span>
-                  </td>
-                  <td style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--text-muted)', maxWidth: 200, wordBreak: 'break-all' }}>
-                    {fn.url}
                   </td>
                   <td>
                     {fn.parameters.map((p) => (
@@ -101,6 +105,11 @@ export default function LeapingFunctionsPage() {
                       <span className="badge badge-safe">no</span>
                     )}
                   </td>
+                  {showTechnicalDetails ? (
+                    <td style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--text-muted)', maxWidth: 200, wordBreak: 'break-all' }}>
+                      {fn.url}
+                    </td>
+                  ) : null}
                 </tr>
               ))}
             </tbody>
