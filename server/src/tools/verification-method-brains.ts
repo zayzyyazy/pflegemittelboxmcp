@@ -1,3 +1,4 @@
+import { inferPhoneLookupFoundFromLeapingInput } from './leaping-field-bindings.js';
 import { normalizeVnr as normalizeVnrLoose } from './normalize-vnr.js';
 
 export interface VerificationPhoneBrainInput {
@@ -105,7 +106,7 @@ export interface VerificationSessionStoredValues {
   check_insurance_number_format_result: string | null;
 }
 
-interface VerificationSessionState extends VerificationSessionStoredValues {
+export interface VerificationSessionState extends VerificationSessionStoredValues {
   pending_birthday_day: number | null;
   pending_birthday_month: number | null;
   awaiting_field: AddressAwaitingField | null;
@@ -330,9 +331,24 @@ function getSessionState(sessionId: string | undefined): VerificationSessionStat
   return structuredClone(created);
 }
 
+/** Clone router + tests: load or create session state for a stable session_id. */
+export function loadVerificationSessionState(
+  sessionId: string | undefined
+): VerificationSessionState | null {
+  return getSessionState(sessionId);
+}
+
 function saveSessionState(sessionId: string | undefined, state: VerificationSessionState) {
   if (!sessionId) return;
   verificationSessions.set(sessionId, structuredClone(state));
+}
+
+/** Persist verification session after router or brain updates. */
+export function storeVerificationSessionState(
+  sessionId: string | undefined,
+  state: VerificationSessionState
+): void {
+  saveSessionState(sessionId, state);
 }
 
 function toNullableString(value: string | undefined): string | null {
@@ -369,29 +385,6 @@ function asNumber(value: unknown): number | undefined {
     const parsed = Number(value);
     if (Number.isFinite(parsed)) return parsed;
   }
-  return undefined;
-}
-
-function inferPhoneLookupFoundFromLeapingInput(input: Record<string, unknown>): boolean | undefined {
-  const fromFlag = asBoolean(input.phone_lookup_found);
-  if (fromFlag === true) return true;
-  if (fromFlag === false) return false;
-
-  const phoneFlagText = asString(input.phone_lookup_found);
-  if (phoneFlagText) {
-    const normalized = phoneFlagText.toLowerCase();
-    if (normalized === 'false' || normalized.includes('kein kunde gefunden')) return false;
-    return true;
-  }
-
-  const idPhone = asString(input.id_phone);
-  if (idPhone) return true;
-
-  const id = asString(input.id);
-  if (id && (input.id_phone !== undefined || input.phone_lookup_found !== undefined)) {
-    return true;
-  }
-
   return undefined;
 }
 

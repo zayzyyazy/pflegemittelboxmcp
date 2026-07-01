@@ -88,7 +88,7 @@ Many patches on birthday-auth ordering, CRM sanitization, safe wrappers (later r
 
 ## Stabilization branch policy
 
-Branch: `cursor/jun30-baseline-stabilization-6983`
+Branch: `cursor/jun30-baseline-stabilization-6983` (PR #2)
 
 **Keep:**
 
@@ -96,6 +96,8 @@ Branch: `cursor/jun30-baseline-stabilization-6983`
 - Three separate brains
 - Native `check_insurance_number_format` in VNR flow
 - Session state via `session_id` = `leaping_conversation_id_hex`
+- `pmb_debug_echo_session` / `pmb_debug_echo_session_only` for session binding checks
+- `pmb_verification_method_router` after intent, before method brain
 
 **Minimal fixes only:**
 
@@ -107,10 +109,39 @@ Branch: `cursor/jun30-baseline-stabilization-6983`
 
 **Explicitly not on stabilization:**
 
-- Slim controller-only Leaping output
+- Slim controller-only Leaping output (`49c8267` regression)
 - Safe wrappers / `LEAPING_FUNC_*`
 - Broad schema expansion
 - Large prompt rewrite
+
+## PR #2 checklist (stabilization candidate)
+
+| Check | PR #2 |
+|---|---|
+| Router registered (`pmb_verification_method_router`) | Yes |
+| Router accepts/passes `session_id` | Yes |
+| `id_phone = "107484"` → phone found | Yes |
+| Debug echo tools registered | Yes |
+| All method brains return full legacy JSON | Yes (`JSON.stringify(result)`) |
+| Avoid `49c8267` slim output regression | Yes |
+| VNR uses native `check_insurance_number_format` | Yes |
+| VNR flow: lookup → birthday → `check_birthday` → `weiter` | Yes |
+| Address path preserves values via `session_id` | Yes |
+| No safe wrappers | Yes |
+
+## Leaping node order for PR #2 testing
+
+```
+get_customer_by_phone
+→ pmb_debug_echo_session_only   (confirm session_id, session_mode=session, id_phone if bound)
+→ pmb_verification_method_router (after intent; id_phone → phone brain)
+→ selected brain (phone / address / VNR)
+→ native Marie functions ONLY when allowed_to_call_function=true
+→ same brain again with native result field bound
+→ transition ONLY when allowed_to_transition=true
+```
+
+Compare against hotfix PR #1 (`cursor/phase1-verification-hotfix-6983`) for birthday parsing and VNR retry behavior, but PR #2 is the serious stabilization candidate because it restores the legacy Leaping contract.
 
 ## Deploy stabilization branch
 

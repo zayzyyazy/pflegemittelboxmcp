@@ -21,6 +21,16 @@ import {
 } from './tools/post-call-email-notifier.js';
 import { parseAddressVerificationGuardrail } from './tools/address-verification-guardrail.js';
 import {
+  coerceDebugEchoSessionInput,
+  coerceDebugEchoSessionOnlyInput,
+  runDebugEchoSession,
+  runDebugEchoSessionOnly,
+} from './tools/debug-echo-session.js';
+import {
+  coerceVerificationMethodRouterInput,
+  runVerificationMethodRouter,
+} from './tools/verification-method-router.js';
+import {
   coerceVerificationAddressBrainInput,
   coerceVerificationPhoneBrainInput,
   coerceVerificationVnrBrainInput,
@@ -146,11 +156,110 @@ export function createMcpServer(): McpServer {
   );
 
   server.tool(
+    'pmb_debug_echo_session',
+    'Clone-only debug helper: echoes session_id and bound fields from Leaping Function nodes. ' +
+      'Do not wire into production Marie. Bind session_id = leaping_conversation_id_hex to verify stable IDs.',
+    {
+      session_id: z.string().optional(),
+      latest_customer_input: z.string().optional(),
+      plz: z.string().optional(),
+      hnr: z.string().optional(),
+      bday: z.string().optional(),
+      id_phone: z
+        .string()
+        .optional()
+        .describe('Customer id from get_customer_by_phone when Leaping binds id_phone.'),
+      phone_lookup_found: z
+        .union([z.boolean(), z.string()])
+        .optional()
+        .describe('Result of get_customer_by_phone or explicit phone-found flag.'),
+    },
+    async (input) => {
+      const start = Date.now();
+      const coerced = coerceDebugEchoSessionInput(input);
+      const result = runDebugEchoSession(coerced);
+      logCall('pmb_debug_echo_session', coerced, result, null, Date.now() - start);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'pmb_debug_echo_session_only',
+    'Clone-only session binding smoke test. Accepts session_id and optional phone lookup fields. ' +
+      'Use after get_customer_by_phone to verify session_id binding without LLM-filled extras.',
+    {
+      session_id: z.string().optional(),
+      id_phone: z
+        .string()
+        .optional()
+        .describe('Customer id from get_customer_by_phone when Leaping binds id_phone.'),
+      phone_lookup_found: z
+        .union([z.boolean(), z.string()])
+        .optional()
+        .describe('Result of get_customer_by_phone or explicit phone-found flag.'),
+    },
+    async (input) => {
+      const start = Date.now();
+      const coerced = coerceDebugEchoSessionOnlyInput(input);
+      const result = runDebugEchoSessionOnly(coerced);
+      logCall('pmb_debug_echo_session_only', coerced, result, null, Date.now() - start);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'pmb_verification_method_router',
+    'Clone-only verification method router. Runs after intent detection and before Kundenidentifikation. ' +
+      'Chooses phone, address, or VNR path and stores it in MCP session. Does not perform CRM lookups.',
+    {
+      session_id: z
+        .string()
+        .optional()
+        .describe('Stable call session id (leaping_conversation_id_hex).'),
+      latest_customer_input: z
+        .string()
+        .optional()
+        .describe('Customer answer when choosing verification method (VNR vs address).'),
+      phone_lookup_found: z
+        .union([z.boolean(), z.string()])
+        .optional()
+        .describe('Result of get_customer_by_phone: true/false or customer id when found.'),
+      id_phone: z
+        .string()
+        .optional()
+        .describe('Customer id from get_customer_by_phone when Leaping binds id_phone instead of phone_lookup_found.'),
+      id: z
+        .string()
+        .optional()
+        .describe('Customer id populated after get_customer_by_phone. Non-empty means phone lookup found.'),
+      get_customer_by_phone_result: z
+        .string()
+        .optional()
+        .describe('Native get_customer_by_phone result or error text (e.g. Kein Kunde gefunden).'),
+      customer_intent: z
+        .string()
+        .optional()
+        .describe('Optional intent label from Leaping (e.g. box_change, delivery_status).'),
+    },
+    async (input) => {
+      const start = Date.now();
+      const coerced = coerceVerificationMethodRouterInput(input);
+      const result = runVerificationMethodRouter(coerced);
+      logCall('pmb_verification_method_router', coerced, result, null, Date.now() - start);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
     'pmb_verification_phone_brain',
     'Deterministic phone verification step controller. Use only after get_customer_by_phone already found a customer.',
     {
       session_id: z.string().optional(),
       phone_lookup_found: z.boolean().optional(),
+      id_phone: z
+        .string()
+        .optional()
+        .describe('Customer id from get_customer_by_phone when Leaping binds id_phone.'),
       latest_customer_input: z.string().optional(),
       birthday_customer: z.string().optional(),
       check_birthday_result: z.enum(['success', 'failed', 'error', 'not_called']).optional(),
@@ -176,6 +285,10 @@ export function createMcpServer(): McpServer {
     {
       session_id: z.string().optional(),
       phone_lookup_found: z.boolean().optional(),
+      id_phone: z
+        .string()
+        .optional()
+        .describe('Customer id from get_customer_by_phone when Leaping binds id_phone.'),
       latest_customer_input: z.string().optional(),
       plz: z.string().optional(),
       house_number: z.string().optional(),

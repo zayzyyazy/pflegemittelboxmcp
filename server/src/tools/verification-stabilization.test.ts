@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  runDebugEchoSessionOnly,
+} from './debug-echo-session.js';
+import {
+  coerceVerificationMethodRouterInput,
+  runVerificationMethodRouter,
+} from './verification-method-router.js';
+import {
   coerceVerificationPhoneBrainInput,
   coerceVerificationVnrBrainInput,
   runVerificationPhoneBrain,
@@ -70,4 +77,30 @@ test('stabilization: VNR failed check without stored birthday uses smart retry',
   assert.equal(failed.next_action, 'ASK_BIRTHDAY');
   assert.match(failed.say, /konnte ich leider nicht bestätigen/);
   assert.notEqual(failed.say, 'Bitte nennen Sie mir zur Verifizierung Ihr Geburtsdatum.');
+});
+
+test('stabilization: router routes id_phone=107484 to phone brain', () => {
+  const sessionId = 'router-phone-id';
+  const result = runVerificationMethodRouter(
+    coerceVerificationMethodRouterInput({
+      session_id: sessionId,
+      id_phone: '107484',
+    })
+  );
+  assert.equal(result.active_brain, 'phone');
+  assert.equal(result.next_brain, 'pmb_verification_phone_brain');
+  assert.equal(result.session_id_received, true);
+  assert.equal(result.session_mode, 'session');
+});
+
+test('stabilization: debug echo session_only reports session mode and id_phone', () => {
+  const sessionId = 'echo-session-only';
+  const result = runDebugEchoSessionOnly({
+    session_id: sessionId,
+    id_phone: '107484',
+  });
+  assert.equal(result.session_id_received, true);
+  assert.equal(result.session_mode, 'session');
+  assert.equal(result.inferred_phone_lookup_found, true);
+  assert.equal(result.received_fields.id_phone, '107484');
 });
