@@ -11,6 +11,8 @@ export interface VerificationMethodRouterInput {
   session_id?: string;
   latest_customer_input?: string;
   phone_lookup_found?: boolean;
+  /** Optional intent label from Leaping (e.g. box_change, delivery_status). */
+  customer_intent?: string;
 }
 
 export interface VerificationMethodRouterResult {
@@ -28,7 +30,7 @@ export interface VerificationMethodRouterResult {
   session_mode: 'session' | 'stateless';
 }
 
-const METHOD_CHOICE_QUESTION =
+const METHOD_CHOICE_SUFFIX =
   'Ich kann Sie entweder über Ihre Versichertennummer oder über Ihre Postleitzahl identifizieren. Was ist Ihnen lieber?';
 
 const NEXT_BRAIN: Record<
@@ -60,6 +62,7 @@ export function coerceVerificationMethodRouterInput(
     session_id: optionalString(input.session_id),
     latest_customer_input: optionalString(input.latest_customer_input),
     phone_lookup_found: asBoolean(input.phone_lookup_found),
+    customer_intent: optionalString(input.customer_intent),
   };
 }
 
@@ -70,6 +73,40 @@ function normalizeText(text: string): string {
     .replace(/ö/g, 'oe')
     .replace(/ü/g, 'ue')
     .replace(/ß/g, 'ss');
+}
+
+export function buildMethodChoiceIntro(customerIntent?: string): string {
+  const normalized = normalizeText(customerIntent ?? '');
+
+  if (
+    normalized.includes('boxwechsel') ||
+    normalized.includes('box wechsel') ||
+    normalized.includes('box aendern') ||
+    normalized.includes('box ändern') ||
+    normalized.includes('box change') ||
+    normalized.includes('box_change') ||
+    (normalized.includes('box') && (normalized.includes('aender') || normalized.includes('änder') || normalized.includes('wechsel')))
+  ) {
+    return 'Gerne, ich helfe Ihnen dabei, Ihre Box zu ändern. Dafür muss ich Sie kurz identifizieren.';
+  }
+
+  if (
+    normalized.includes('lieferstatus') ||
+    normalized.includes('delivery_status') ||
+    normalized.includes('delivery status') ||
+    normalized.includes('lieferung') ||
+    normalized.includes('wo ist') ||
+    normalized.includes('wohin') ||
+    (normalized.includes('box') && (normalized.includes('ist') || normalized.includes('status')))
+  ) {
+    return 'Gerne, ich schaue nach, wo Ihre Box ist. Dafür muss ich Sie kurz identifizieren.';
+  }
+
+  return 'Gerne, ich helfe Ihnen dabei. Dafür muss ich Sie kurz identifizieren.';
+}
+
+export function buildMethodChoiceQuestion(customerIntent?: string): string {
+  return `${buildMethodChoiceIntro(customerIntent)} ${METHOD_CHOICE_SUFFIX}`;
 }
 
 function looksLikeVnrCandidate(text: string): boolean {
@@ -207,6 +244,12 @@ export function runVerificationMethodRouter(
   }
 
   const phoneLookupFound = rawInput.phone_lookup_found;
+
+  if (phoneLookupFound === true) {
+    persistPathChoice(sessionId, session, 'phone', true);
+    return buildChosenPathResult('phone', sessionId, sessionReceived);
+  }
+
   const detectedPath = detectPathFromInput(rawInput.latest_customer_input, phoneLookupFound);
 
   if (detectedPath) {
@@ -217,7 +260,7 @@ export function runVerificationMethodRouter(
   return {
     ok: true,
     action_type: 'SAY_ONLY',
-    say: METHOD_CHOICE_QUESTION,
+    say: buildMethodChoiceQuestion(rawInput.customer_intent),
     active_brain: null,
     next_brain: null,
     requires_followup_mcp_call: true,

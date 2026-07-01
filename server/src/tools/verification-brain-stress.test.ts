@@ -568,7 +568,7 @@ const STRESS_SCENARIOS: StressScenario[] = [
   {
     id: 26,
     group: 'VNR',
-    name: 'spoken VNR confirm ja calls format check',
+    name: 'spoken VNR confirm ja calls customer lookup',
     brain: 'vnr',
     session_id: 'stress-vnr-004',
     steps: [
@@ -577,20 +577,20 @@ const STRESS_SCENARIOS: StressScenario[] = [
     ],
     expect: {
       action_type: 'CALL_FUNCTION',
-      function_name: 'check_insurance_number_format',
+      function_name: 'get_customer_by_insurance_number',
       function_arguments: { insurance_number: 'L039359923' },
     },
   },
   {
     id: 27,
     group: 'VNR',
-    name: 'format false invalid branch no lookup',
+    name: 'invalid confirmed shape asks letter not lookup',
     brain: 'vnr',
     session_id: 'stress-vnr-005',
     steps: [
-      { input: { vnr_candidate: 'L039359923', vnr_confirmed: true, check_insurance_number_format_result: 'invalid' } },
+      { input: { vnr_candidate: '039359923', vnr_confirmed: true } },
     ],
-    expect: { next_action: 'ASK_VNR', never_function: 'get_customer_by_insurance_number' },
+    expect: { next_action: 'ASK_VNR_LETTER', never_function: 'get_customer_by_insurance_number' },
   },
   {
     id: 28,
@@ -599,7 +599,7 @@ const STRESS_SCENARIOS: StressScenario[] = [
     brain: 'vnr',
     session_id: 'stress-vnr-006',
     steps: [
-      { input: { vnr_candidate: 'L039359923', vnr_confirmed: true, check_insurance_number_format_result: 'Valid!' } },
+      { input: { vnr_candidate: 'L039359923', vnr_confirmed: true } },
     ],
     expect: { action_type: 'CALL_FUNCTION', function_name: 'get_customer_by_insurance_number' },
   },
@@ -610,7 +610,7 @@ const STRESS_SCENARIOS: StressScenario[] = [
     brain: 'vnr',
     session_id: 'stress-vnr-007',
     steps: [
-      { input: { vnr_candidate: 'L039359923', vnr_confirmed: true, check_insurance_number_format_result: 'valid' } },
+      { input: { vnr_candidate: 'L039359923', vnr_confirmed: true } },
       { input: { get_customer_by_insurance_number_result: { error: 'Kein Kunde gefunden' } } },
     ],
     expect: { next_action: 'ASK_VNR', never_function: 'check_birthday' },

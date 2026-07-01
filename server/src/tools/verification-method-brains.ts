@@ -1898,72 +1898,27 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
       ok: true,
       next_action: 'CONFIRM_VNR',
       say: `Ich habe ${input.vnr_candidate} verstanden. Ist das korrekt?`,
-      reason: 'VNR must be confirmed before format validation or lookup.',
+      reason: 'VNR must be confirmed before customer lookup.',
       missing_fields: [],
       safety_flags: [],
     });
     return finalize(result);
   }
 
-  if (input.check_insurance_number_format_result === 'not_called') {
-    const result = makeResult('vnr', {
-      ok: true,
-      next_action: 'CALL_CHECK_INSURANCE_NUMBER_FORMAT',
-      say: '',
-      reason: 'Confirmed VNR must be format-checked before any customer lookup.',
-      missing_fields: [],
-      safety_flags: [],
-      function_to_call: 'check_insurance_number_format',
-      function_arguments: insuranceNumberArgs?.function_arguments,
-      leaping_function_arguments: insuranceNumberArgs?.leaping_function_arguments,
-    });
-    return finalize(result);
-  }
-
-  if (input.check_insurance_number_format_result === 'invalid') {
-    if ((input.vnr_request_count ?? 0) >= 2) {
-      return finalize(makeResult('vnr', {
-        ok: false,
-        next_action: 'TRANSITION_NICHT_IDENTIFIZIERT',
-        say: 'Ich konnte die Versicherungsnummer leider nicht eindeutig verarbeiten.',
-        reason: 'VNR format was invalid after the allowed retry limit.',
-        missing_fields: ['vnr'],
-        safety_flags: ['vnr_format_limit_reached'],
-        transition_to: 'nicht_identifiziert',
-      }));
-    }
-
-    const result = makeResult('vnr', {
-      ok: true,
-      next_action: 'ASK_VNR',
-      say: 'Bitte nennen Sie mir Ihre Versicherungsnummer noch einmal.',
-      reason: 'VNR format is invalid and one more request is allowed.',
-      missing_fields: ['vnr'],
-      safety_flags: ['vnr_format_retry'],
-    });
-    return finalize(result);
-  }
-
-  if (input.check_insurance_number_format_result === 'error') {
-    return finalize(makeResult('vnr', {
-      ok: false,
-      next_action: 'TECHNICAL_ESCALATION',
-      say: 'Es gibt gerade ein technisches Problem bei der Verifizierung. Ich gebe das intern weiter.',
-      reason: 'VNR format check returned an error.',
-      missing_fields: [],
-      safety_flags: ['vnr_format_error'],
-    }));
+  // Internal format validation after confirmation — no native check_insurance_number_format call.
+  if (session) {
+    session.check_insurance_number_format_result = 'valid';
   }
 
   if (input.get_customer_by_insurance_number_result === 'not_called') {
     const result = makeResult('vnr', {
-      ok: false,
+      ok: true,
       next_action: 'CALL_GET_CUSTOMER_BY_INSURANCE_NUMBER',
       say: '',
       reason:
-        'VNR format is valid, but customer lookup has not been called yet. Birthday check is not allowed before customer lookup.',
+        'Confirmed VNR passed internal format validation. Customer lookup is the next safe step before birthday authentication.',
       missing_fields: [],
-      safety_flags: ['blocked_check_birthday_before_customer_lookup'],
+      safety_flags: ['internal_vnr_format_valid', 'blocked_check_birthday_before_customer_lookup'],
       function_to_call: 'get_customer_by_insurance_number',
       function_arguments: insuranceNumberArgs?.function_arguments,
       leaping_function_arguments: insuranceNumberArgs?.leaping_function_arguments,
@@ -2006,109 +1961,122 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
     }));
   }
 
-  if (birthdayMerge.parse.status === 'incomplete_year') {
-    const result = makeResult('vnr', {
-      ok: true,
-      next_action: 'ASK_BIRTH_YEAR',
-      say: 'Bitte nennen Sie mir noch das Geburtsjahr vollständig.',
-      reason: birthdayMerge.parse.reason ?? 'Birthday was only partially provided.',
-      missing_fields: ['birth_year'],
-      safety_flags: [],
-    });
-    return finalize(result);
-  }
-
-  if (birthdayMerge.parse.status === 'impossible') {
-    return finalize(makeResult('vnr', {
-      ok: false,
-      next_action: 'ASK_BIRTHDAY',
-      say: 'Das Geburtsdatum konnte ich so nicht verarbeiten. Bitte nennen Sie es noch einmal vollständig.',
-      reason: birthdayMerge.parse.reason ?? 'Birthday was impossible or ambiguous.',
-      missing_fields: ['birthday_customer'],
-      safety_flags: ['birthday_invalid'],
-    }));
-  }
-
-  if (!input.birthday_customer) {
-    if ((input.birthday_request_count ?? 0) >= 2) {
+  // Customer found by VNR identifies them; birthday authentication is still required before weiter.
+  if (input.get_customer_by_insurance_number_result === 'found') {
+    if (input.check_birthday_result === 'success') {
       return finalize(makeResult('vnr', {
-        ok: false,
-        next_action: 'TRANSITION_NICHT_IDENTIFIZIERT',
-        say: 'Ich konnte Sie leider nicht eindeutig verifizieren.',
-        reason: 'Birthday was not provided after the allowed number of requests.',
-        missing_fields: ['birthday_customer'],
-        safety_flags: ['birthday_request_limit_reached'],
-        transition_to: 'nicht_identifiziert',
-      }));
-    }
-
-    const result = makeResult('vnr', {
-      ok: true,
-      next_action: 'ASK_BIRTHDAY',
-      say: 'Bitte nennen Sie mir zur Verifizierung Ihr Geburtsdatum.',
-      reason: 'Customer lookup by insurance number found a customer, so birthday is the next safe verification step.',
-      missing_fields: ['birthday_customer'],
-      safety_flags: [],
-    });
-    return finalize(result);
-  }
-
-  if (input.check_birthday_result === 'success') {
-    return finalize(makeResult('vnr', {
-      ok: true,
-      next_action: 'TRANSITION_WEITER',
-      say: 'Danke, die Verifizierung ist abgeschlossen.',
-      reason: 'Birthday check succeeded after the customer was found by insurance number.',
-      missing_fields: [],
-      safety_flags: [],
-      transition_to: 'weiter',
-    }));
-  }
-
-  if (input.check_birthday_result === 'failed') {
-    if ((input.birthday_check_attempts ?? 0) >= 2 || (input.birthday_request_count ?? 0) >= 2) {
-      return finalize(makeResult('vnr', {
-        ok: false,
-        next_action: 'TRANSITION_NICHT_IDENTIFIZIERT',
-        say: 'Ich konnte Sie leider nicht eindeutig verifizieren.',
-        reason: 'Birthday check failed after the allowed retry limit.',
+        ok: true,
+        next_action: 'TRANSITION_WEITER',
+        say: 'Danke, die Verifizierung ist abgeschlossen.',
+        reason: 'Birthday check succeeded after the customer was found by insurance number.',
         missing_fields: [],
-        safety_flags: ['birthday_check_limit_reached'],
-        transition_to: 'nicht_identifiziert',
+        safety_flags: [],
+        transition_to: 'weiter',
+      }));
+    }
+
+    if (birthdayMerge.parse.status === 'incomplete_year') {
+      const result = makeResult('vnr', {
+        ok: true,
+        next_action: 'ASK_BIRTH_YEAR',
+        say: 'Bitte nennen Sie mir noch das Geburtsjahr vollständig.',
+        reason: birthdayMerge.parse.reason ?? 'Birthday was only partially provided.',
+        missing_fields: ['birth_year'],
+        safety_flags: [],
+      });
+      return finalize(result);
+    }
+
+    if (birthdayMerge.parse.status === 'impossible') {
+      return finalize(makeResult('vnr', {
+        ok: false,
+        next_action: 'ASK_BIRTHDAY',
+        say: 'Das Geburtsdatum konnte ich so nicht verarbeiten. Bitte nennen Sie es noch einmal vollständig.',
+        reason: birthdayMerge.parse.reason ?? 'Birthday was impossible or ambiguous.',
+        missing_fields: ['birthday_customer'],
+        safety_flags: ['birthday_invalid'],
+      }));
+    }
+
+    if (!input.birthday_customer) {
+      if ((input.birthday_request_count ?? 0) >= 2) {
+        return finalize(makeResult('vnr', {
+          ok: false,
+          next_action: 'TRANSITION_NICHT_IDENTIFIZIERT',
+          say: 'Ich konnte Sie leider nicht eindeutig verifizieren.',
+          reason: 'Birthday was not provided after the allowed number of requests.',
+          missing_fields: ['birthday_customer'],
+          safety_flags: ['birthday_request_limit_reached'],
+          transition_to: 'nicht_identifiziert',
+        }));
+      }
+
+      const result = makeResult('vnr', {
+        ok: true,
+        next_action: 'ASK_BIRTHDAY',
+        say: 'Bitte nennen Sie mir zur Verifizierung Ihr Geburtsdatum.',
+        reason: 'Customer lookup by insurance number found a customer, so birthday is the next safe verification step.',
+        missing_fields: ['birthday_customer'],
+        safety_flags: ['vnr_found_requires_birthday_auth'],
+      });
+      return finalize(result);
+    }
+
+    if (input.check_birthday_result === 'failed') {
+      if ((input.birthday_check_attempts ?? 0) >= 2 || (input.birthday_request_count ?? 0) >= 2) {
+        return finalize(makeResult('vnr', {
+          ok: false,
+          next_action: 'TRANSITION_NICHT_IDENTIFIZIERT',
+          say: 'Ich konnte Sie leider nicht eindeutig verifizieren.',
+          reason: 'Birthday check failed after the allowed retry limit.',
+          missing_fields: [],
+          safety_flags: ['birthday_check_limit_reached'],
+          transition_to: 'nicht_identifiziert',
+        }));
+      }
+
+      const result = makeResult('vnr', {
+        ok: true,
+        next_action: 'ASK_BIRTHDAY',
+        say: 'Bitte nennen Sie mir Ihr Geburtsdatum noch einmal zur Verifizierung.',
+        reason: 'Birthday check failed once and one retry is still allowed.',
+        missing_fields: ['birthday_customer'],
+        safety_flags: ['birthday_retry'],
+      });
+      return finalize(result);
+    }
+
+    if (input.birthday_system_available === false) {
+      return finalize(makeResult('vnr', {
+        ok: false,
+        next_action: 'TECHNICAL_ESCALATION',
+        say: 'Es gibt gerade ein technisches Problem bei der Verifizierung. Ich gebe das intern weiter.',
+        reason: 'Birthday system is unavailable, so check_birthday is not safe to call.',
+        missing_fields: ['birthday_system'],
+        safety_flags: ['missing_birthday_system', 'block_birthday_loop'],
       }));
     }
 
     const result = makeResult('vnr', {
       ok: true,
-      next_action: 'ASK_BIRTHDAY',
-      say: 'Bitte nennen Sie mir Ihr Geburtsdatum noch einmal zur Verifizierung.',
-      reason: 'Birthday check failed once and one retry is still allowed.',
-      missing_fields: ['birthday_customer'],
-      safety_flags: ['birthday_retry'],
+      next_action: 'CALL_CHECK_BIRTHDAY',
+      say: '',
+      reason: 'Customer lookup found a customer and birthday is available, so check_birthday is the next safe step.',
+      missing_fields: [],
+      safety_flags: ['vnr_found_requires_birthday_auth'],
+      function_to_call: 'check_birthday',
+      function_arguments: checkBirthdayArgs?.function_arguments,
+      leaping_function_arguments: checkBirthdayArgs?.leaping_function_arguments,
     });
     return finalize(result);
   }
 
-  if (input.birthday_system_available === false) {
-    return finalize(makeResult('vnr', {
-      ok: false,
-      next_action: 'TECHNICAL_ESCALATION',
-      say: 'Es gibt gerade ein technisches Problem bei der Verifizierung. Ich gebe das intern weiter.',
-      reason: 'Birthday system is unavailable, so check_birthday is not safe to call.',
-      missing_fields: ['birthday_system'],
-      safety_flags: ['missing_birthday_system', 'block_birthday_loop'],
-    }));
-  }
-  const result = makeResult('vnr', {
-    ok: true,
-    next_action: 'CALL_CHECK_BIRTHDAY',
-    say: '',
-    reason: 'Customer lookup found a customer and birthday is available, so check_birthday is the next safe step.',
+  return finalize(makeResult('vnr', {
+    ok: false,
+    next_action: 'TECHNICAL_ESCALATION',
+    say: 'Es gibt gerade ein technisches Problem bei der Verifizierung. Ich gebe das intern weiter.',
+    reason: 'VNR verification reached an unexpected state after customer lookup.',
     missing_fields: [],
-    safety_flags: [],
-    function_to_call: 'check_birthday',
-    function_arguments: checkBirthdayArgs?.function_arguments,
-    leaping_function_arguments: checkBirthdayArgs?.leaping_function_arguments,
-  });
-  return finalize(result);
+    safety_flags: ['unexpected_vnr_state'],
+  }));
 }

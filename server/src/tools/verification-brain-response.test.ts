@@ -42,7 +42,7 @@ test('2. controller includes check_birthday function_arguments', () => {
   assert.equal(controller.active_brain, 'phone');
 });
 
-test('3. controller includes VNR function_arguments', () => {
+test('3. controller includes VNR function_arguments for customer lookup', () => {
   const result = runVerificationVnrBrain({
     session_id: 'controller-vnr-format',
     vnr_candidate: 'L039359923',
@@ -51,7 +51,7 @@ test('3. controller includes VNR function_arguments', () => {
   const { controller } = splitVerificationBrainResponse(result);
 
   assert.equal(controller.action_type, 'CALL_FUNCTION');
-  assert.equal(controller.function_name, 'check_insurance_number_format');
+  assert.equal(controller.function_name, 'get_customer_by_insurance_number');
   assert.deepEqual(controller.function_arguments, { insurance_number: 'L039359923' });
   assert.equal(controller.active_brain, 'vnr');
 });

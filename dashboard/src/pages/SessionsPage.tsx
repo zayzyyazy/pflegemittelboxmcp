@@ -12,6 +12,99 @@ function pretty(json: string | null) {
   }
 }
 
+interface SessionStoredValues {
+  active_verification_path?: string | null;
+  phone_lookup_found?: boolean | null;
+  plz?: string | null;
+  house_number?: string | null;
+  birthday_customer?: string | null;
+  vnr_candidate?: string | null;
+  vnr_confirmed?: boolean | null;
+  get_customer_by_plz_geb_result?: string | null;
+  get_customer_by_insurance_number_result?: string | null;
+  check_birthday_result?: string | null;
+  check_birthday_error?: string | null;
+  check_insurance_number_format_result?: string | null;
+}
+
+function parseJsonRecord(json: string | null): Record<string, unknown> | null {
+  if (!json) return null;
+  try {
+    const parsed = JSON.parse(json) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function extractStoredValues(logs: CallLog[]): SessionStoredValues | null {
+  for (let i = logs.length - 1; i >= 0; i -= 1) {
+    const output = parseJsonRecord(logs[i].output);
+    if (!output) continue;
+    const debug = output.debug as Record<string, unknown> | undefined;
+    const stored = debug?.stored_values as SessionStoredValues | undefined;
+    if (stored) return stored;
+  }
+  return null;
+}
+
+function birthdayStatus(stored: SessionStoredValues | null): string {
+  if (!stored) return '—';
+  if (stored.check_birthday_result && stored.check_birthday_result !== 'not_called') {
+    return stored.check_birthday_result;
+  }
+  const lookupFound =
+    stored.get_customer_by_plz_geb_result === 'found' ||
+    stored.get_customer_by_insurance_number_result === 'found';
+  if (lookupFound && stored.birthday_customer) return 'pending check_birthday';
+  if (lookupFound) return 'pending collection';
+  return 'not started';
+}
+
+function SessionStatePanel({ stored }: { stored: SessionStoredValues | null }) {
+  if (!stored) {
+    return (
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+          No MCP session state captured yet for this conversation.
+        </div>
+      </div>
+    );
+  }
+
+  const rows: Array<{ label: string; value: string }> = [
+    { label: 'Active path', value: stored.active_verification_path ?? '—' },
+    { label: 'Phone lookup found', value: stored.phone_lookup_found === null || stored.phone_lookup_found === undefined ? '—' : String(stored.phone_lookup_found) },
+    { label: 'PLZ', value: stored.plz ?? '—' },
+    { label: 'House number', value: stored.house_number ?? '—' },
+    { label: 'Birthday (customer)', value: stored.birthday_customer ?? '—' },
+    { label: 'VNR candidate', value: stored.vnr_candidate ?? '—' },
+    { label: 'VNR confirmed', value: stored.vnr_confirmed === null || stored.vnr_confirmed === undefined ? '—' : String(stored.vnr_confirmed) },
+    { label: 'Address lookup', value: stored.get_customer_by_plz_geb_result ?? '—' },
+    { label: 'VNR lookup', value: stored.get_customer_by_insurance_number_result ?? '—' },
+    { label: 'Birthday check', value: birthdayStatus(stored) },
+    { label: 'Birthday error', value: stored.check_birthday_error ?? '—' },
+  ];
+
+  return (
+    <div className="card" style={{ marginBottom: 16 }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-label)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
+        MCP session state (operator only)
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
+        {rows.map((row) => (
+          <div key={row.label} style={{ fontSize: 13 }}>
+            <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>{row.label}</div>
+            <code style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>{row.value}</code>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function SessionsPage() {
   const { sessionId: routeSessionId } = useParams();
   const navigate = useNavigate();
@@ -96,7 +189,9 @@ export default function SessionsPage() {
           <div className="empty-state">No MCP calls logged yet for session <code>{activeSessionId}</code>.</div>
         </div>
       ) : (
-        <div className="card">
+        <>
+          <SessionStatePanel stored={extractStoredValues(logs)} />
+          <div className="card">
           <div style={{ marginBottom: 12, fontSize: 13, color: 'var(--text-muted)' }}>
             Session <code>{activeSessionId}</code> · {logs.length} call{logs.length === 1 ? '' : 's'} · chronological
           </div>
@@ -168,6 +263,7 @@ export default function SessionsPage() {
             </table>
           </div>
         </div>
+        </>
       )}
     </>
   );

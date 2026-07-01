@@ -238,17 +238,16 @@ test('16. VNR with stable session persists candidate through confirmation', () =
   });
   assert.equal(second.stored_values?.vnr_candidate, 'L039359923');
   assert.equal(second.stored_values?.vnr_confirmed, true);
-  assert.equal(second.next_action, 'CALL_CHECK_INSURANCE_NUMBER_FORMAT');
+  assert.equal(second.next_action, 'CALL_GET_CUSTOMER_BY_INSURANCE_NUMBER');
 });
 
-test('17. VNR format false does not lookup customer', () => {
+test('17. confirmed VNR with invalid shape asks for correction before lookup', () => {
   const result = runVerificationVnrBrain({
-    session_id: 'vnr-format-false',
-    vnr_candidate: 'L039359923',
+    session_id: 'vnr-invalid-shape',
+    vnr_candidate: '039359923',
     vnr_confirmed: true,
-    check_insurance_number_format_result: false,
   });
-  assert.equal(result.next_action, 'ASK_VNR');
+  assert.equal(result.next_action, 'ASK_VNR_LETTER');
   assert.notEqual(result.function_name, 'get_customer_by_insurance_number');
 });
 
@@ -258,7 +257,6 @@ test('18. VNR lookup Kein Kunde gefunden does not ask birthday', () => {
     session_id: sessionId,
     vnr_candidate: 'L039359923',
     vnr_confirmed: true,
-    check_insurance_number_format_result: 'valid',
   });
   const result = runVerificationVnrBrain({
     session_id: sessionId,

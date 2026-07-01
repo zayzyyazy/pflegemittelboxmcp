@@ -435,13 +435,15 @@ test('VNR path confirms from latest utterance parsing', () => {
   assert.equal(result.next_action, 'CONFIRM_VNR');
 });
 
-test('VNR path calls format check before lookup', () => {
+test('VNR path calls customer lookup after confirmation (internal format validation)', () => {
   const result = runVerificationVnrBrain({
     vnr_candidate: 'L039359923',
     vnr_confirmed: true,
   });
 
-  assert.equal(result.next_action, 'CALL_CHECK_INSURANCE_NUMBER_FORMAT');
+  assert.equal(result.next_action, 'CALL_GET_CUSTOMER_BY_INSURANCE_NUMBER');
+  assert.equal(result.function_to_call, 'get_customer_by_insurance_number');
+  assert.ok(result.safety_flags.includes('internal_vnr_format_valid'));
 });
 
 test('VNR path calls customer lookup after valid format', () => {
@@ -459,12 +461,48 @@ test('VNR path blocks birthday check before customer lookup', () => {
   const result = runVerificationVnrBrain({
     vnr_candidate: 'L039359923',
     vnr_confirmed: true,
-    check_insurance_number_format_result: 'valid',
     birthday_customer: '1948-05-03',
   });
 
   assert.equal(result.next_action, 'CALL_GET_CUSTOMER_BY_INSURANCE_NUMBER');
   assert.ok(result.safety_flags.includes('blocked_check_birthday_before_customer_lookup'));
+});
+
+test('VNR found without birthday asks before weiter', () => {
+  const result = runVerificationVnrBrain({
+    session_id: 'vnr-found-requires-bday',
+    vnr_candidate: 'L039359923',
+    vnr_confirmed: true,
+    get_customer_by_insurance_number_result: 'found',
+  });
+
+  assert.equal(result.next_action, 'ASK_BIRTHDAY');
+  assert.notEqual(result.transition_to, 'weiter');
+  assert.ok(result.safety_flags.includes('vnr_found_requires_birthday_auth'));
+});
+
+test('VNR only transitions weiter after successful check_birthday', () => {
+  const beforeAuth = runVerificationVnrBrain({
+    session_id: 'vnr-auth-gate',
+    vnr_candidate: 'L039359923',
+    vnr_confirmed: true,
+    get_customer_by_insurance_number_result: 'found',
+    birthday_customer: '1948-05-03',
+    birthday_system_available: true,
+  });
+  assert.equal(beforeAuth.next_action, 'CALL_CHECK_BIRTHDAY');
+  assert.notEqual(beforeAuth.transition_to, 'weiter');
+
+  const afterAuth = runVerificationVnrBrain({
+    session_id: 'vnr-auth-gate',
+    vnr_candidate: 'L039359923',
+    vnr_confirmed: true,
+    get_customer_by_insurance_number_result: 'found',
+    birthday_customer: '1948-05-03',
+    check_birthday_result: 'success',
+  });
+  assert.equal(afterAuth.next_action, 'TRANSITION_WEITER');
+  assert.equal(afterAuth.transition_to, 'weiter');
 });
 
 test('VNR path treats yes-like reply as confirmation of previous VNR', () => {
@@ -474,7 +512,7 @@ test('VNR path treats yes-like reply as confirmation of previous VNR', () => {
     vnr_confirmed: false,
   });
 
-  assert.equal(result.next_action, 'CALL_CHECK_INSURANCE_NUMBER_FORMAT');
+  assert.equal(result.next_action, 'CALL_GET_CUSTOMER_BY_INSURANCE_NUMBER');
 });
 
 test('VNR path stores candidate and accepts yes confirmation in later call', () => {
@@ -491,7 +529,7 @@ test('VNR path stores candidate and accepts yes confirmation in later call', () 
     session_id: sessionId,
     latest_customer_input: 'ja',
   });
-  assert.equal(second.next_action, 'CALL_CHECK_INSURANCE_NUMBER_FORMAT');
+  assert.equal(second.next_action, 'CALL_GET_CUSTOMER_BY_INSURANCE_NUMBER');
   assert.equal(second.stored_values?.vnr_confirmed, true);
 });
 
@@ -504,7 +542,7 @@ test('latest_customer_input valid triggers warning and does not become customer 
   });
 
   assert.ok(result.safety_flags.includes('latest_customer_input_looks_like_function_result'));
-  assert.equal(result.next_action, 'CALL_CHECK_INSURANCE_NUMBER_FORMAT');
+  assert.equal(result.next_action, 'CALL_GET_CUSTOMER_BY_INSURANCE_NUMBER');
 });
 
 test('VNR digits-only candidate is rejected as missing leading letter', () => {
@@ -635,21 +673,19 @@ test('phone brain normalizes boolean check_birthday_result inside runner', () =>
   assert.equal(failed.next_action, 'ASK_BIRTHDAY');
 });
 
-test('vnr brain normalizes invalid format and not_found lookup objects', () => {
+test('vnr brain rejects invalid shape and normalizes not_found lookup objects', () => {
   const invalid = runVerificationVnrBrain({
     session_id: 'vnr-bool-invalid',
-    vnr_candidate: 'L039359923',
+    vnr_candidate: '039359923',
     vnr_confirmed: true,
-    check_insurance_number_format_result: false as unknown as 'invalid',
   });
-  assert.equal(invalid.next_action, 'ASK_VNR');
+  assert.equal(invalid.next_action, 'ASK_VNR_LETTER');
 
   const sessionId = 'vnr-object-not-found';
   runVerificationVnrBrain({
     session_id: sessionId,
     vnr_candidate: 'L039359923',
     vnr_confirmed: true,
-    check_insurance_number_format_result: 'valid',
   });
   const notFound = runVerificationVnrBrain({
     session_id: sessionId,

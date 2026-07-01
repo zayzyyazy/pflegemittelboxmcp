@@ -1,10 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { runVerificationMethodRouter } from './verification-method-router.js';
+import {
+  buildMethodChoiceIntro,
+  buildMethodChoiceQuestion,
+  runVerificationMethodRouter,
+} from './verification-method-router.js';
 
 const SESSION = 'router-test-session-001';
 
-test('phone_lookup_found=true chooses phone path immediately', () => {
+test('phone_lookup_found=true chooses phone path immediately with empty say', () => {
   const result = runVerificationMethodRouter({
     session_id: SESSION + '-phone',
     phone_lookup_found: true,
@@ -17,6 +21,18 @@ test('phone_lookup_found=true chooses phone path immediately', () => {
   assert.equal(result.session_id_received, true);
 });
 
+test('phone_lookup_found=true never asks method choice question', () => {
+  const result = runVerificationMethodRouter({
+    session_id: SESSION + '-phone-no-ask',
+    phone_lookup_found: true,
+    latest_customer_input: 'Postleitzahl bitte',
+  });
+
+  assert.equal(result.active_brain, 'phone');
+  assert.equal(result.say, '');
+  assert.equal(result.next_brain, 'pmb_verification_phone_brain');
+});
+
 test('no phone match and no input asks method choice question', () => {
   const result = runVerificationMethodRouter({
     session_id: SESSION + '-ask',
@@ -27,6 +43,24 @@ test('no phone match and no input asks method choice question', () => {
   assert.equal(result.next_brain, null);
   assert.match(result.say, /Versichertennummer/);
   assert.match(result.say, /Postleitzahl/);
+  assert.match(result.say, /Gerne, ich helfe Ihnen dabei/);
+});
+
+test('box-change intent uses warmer box wording', () => {
+  const intro = buildMethodChoiceIntro('box_change');
+  const question = buildMethodChoiceQuestion('boxwechsel');
+
+  assert.match(intro, /Box zu ändern/);
+  assert.match(question, /Box zu ändern/);
+  assert.match(question, /Versichertennummer/);
+});
+
+test('delivery intent uses warmer delivery wording', () => {
+  const intro = buildMethodChoiceIntro('delivery_status');
+  const question = buildMethodChoiceQuestion('Wo ist meine Box?');
+
+  assert.match(intro, /wo Ihre Box ist/);
+  assert.match(question, /wo Ihre Box ist/);
 });
 
 test('customer chooses VNR via latest_customer_input', () => {

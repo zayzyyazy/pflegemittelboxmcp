@@ -14,6 +14,10 @@ export const LEAPING_VERIFICATION_METHOD_ROUTER_SCHEMA = {
       type: 'boolean',
       description: 'Result of get_customer_by_phone at call start.',
     },
+    customer_intent: {
+      type: 'string',
+      description: 'Optional intent label from Leaping (e.g. box_change, delivery_status).',
+    },
   },
   required: [] as string[],
 };
@@ -38,10 +42,6 @@ export const LEAPING_VERIFICATION_BRAIN_SCHEMA = {
       type: 'string',
       description: 'Native get_customer_by_insurance_number result summary.',
     },
-    check_insurance_number_format_result: {
-      type: 'string',
-      description: 'Native check_insurance_number_format result summary.',
-    },
     check_birthday_result: {
       type: 'string',
       description: 'Native check_birthday result summary.',
@@ -58,6 +58,7 @@ export const leapingVerificationMethodRouterZod = {
   session_id: z.string().optional(),
   latest_customer_input: z.string().optional(),
   phone_lookup_found: z.boolean().optional(),
+  customer_intent: z.string().optional(),
 };
 
 export const leapingVerificationBrainZod = {
@@ -69,9 +70,6 @@ export const leapingVerificationBrainZod = {
     .optional(),
   get_customer_by_insurance_number_result: z
     .enum(['found', 'not_found', 'error', 'not_called'])
-    .optional(),
-  check_insurance_number_format_result: z
-    .enum(['valid', 'invalid', 'error', 'not_called'])
     .optional(),
   check_birthday_result: z.enum(['success', 'failed', 'error', 'not_called']).optional(),
   check_birthday_error: z.string().optional(),
