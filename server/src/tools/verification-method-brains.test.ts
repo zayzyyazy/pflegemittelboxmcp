@@ -482,23 +482,23 @@ test('VNR found without birthday asks before weiter', () => {
 });
 
 test('VNR only transitions weiter after successful check_birthday', () => {
-  const beforeAuth = runVerificationVnrBrain({
-    session_id: 'vnr-auth-gate',
+  const sessionId = 'vnr-auth-gate';
+  runVerificationVnrBrain({
+    session_id: sessionId,
     vnr_candidate: 'L039359923',
     vnr_confirmed: true,
     get_customer_by_insurance_number_result: 'found',
-    birthday_customer: '1948-05-03',
+  });
+  const beforeAuth = runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: '03.05.1948',
     birthday_system_available: true,
   });
   assert.equal(beforeAuth.next_action, 'CALL_CHECK_BIRTHDAY');
   assert.notEqual(beforeAuth.transition_to, 'weiter');
 
   const afterAuth = runVerificationVnrBrain({
-    session_id: 'vnr-auth-gate',
-    vnr_candidate: 'L039359923',
-    vnr_confirmed: true,
-    get_customer_by_insurance_number_result: 'found',
-    birthday_customer: '1948-05-03',
+    session_id: sessionId,
     check_birthday_result: 'success',
   });
   assert.equal(afterAuth.next_action, 'TRANSITION_WEITER');
@@ -565,7 +565,7 @@ test('VNR valid format result moves to customer lookup', () => {
   assert.equal(result.next_action, 'CALL_GET_CUSTOMER_BY_INSURANCE_NUMBER');
 });
 
-test('VNR found customer with stored birthday does not ask birthday again', () => {
+test('VNR ignores CRM-injected birthday on lookup callback and asks customer', () => {
   const result = runVerificationVnrBrain({
     session_id: 'vnr-bday-reuse',
     vnr_candidate: 'L039359923',
@@ -576,7 +576,7 @@ test('VNR found customer with stored birthday does not ask birthday again', () =
     birthday_system_available: true,
   });
 
-  assert.equal(result.next_action, 'CALL_CHECK_BIRTHDAY');
+  assert.equal(result.next_action, 'ASK_BIRTHDAY');
 });
 
 test('stateless behavior still works without session_id', () => {
@@ -591,12 +591,17 @@ test('stateless behavior still works without session_id', () => {
 });
 
 test('VNR path calls birthday check only after customer lookup found', () => {
-  const result = runVerificationVnrBrain({
+  const sessionId = 'vnr-check-after-lookup';
+  runVerificationVnrBrain({
+    session_id: sessionId,
     vnr_candidate: 'L039359923',
     vnr_confirmed: true,
     check_insurance_number_format_result: 'valid',
     get_customer_by_insurance_number_result: 'found',
-    birthday_customer: '1948-05-03',
+  });
+  const result = runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: '03.05.1948',
     birthday_system_available: true,
   });
 
@@ -627,12 +632,31 @@ test('VNR path stops loops after attempt limits', () => {
   });
   assert.equal(lookupLimit.next_action, 'TRANSITION_NICHT_IDENTIFIZIERT');
 
-  const birthdayLimit = runVerificationVnrBrain({
+  const birthdayLimitSession = 'vnr-birthday-limit';
+  runVerificationVnrBrain({
+    session_id: birthdayLimitSession,
     vnr_candidate: 'L039359923',
     vnr_confirmed: true,
     check_insurance_number_format_result: 'valid',
     get_customer_by_insurance_number_result: 'found',
-    birthday_customer: '1948-05-03',
+  });
+  runVerificationVnrBrain({
+    session_id: birthdayLimitSession,
+    latest_customer_input: '03.05.1948',
+    birthday_system_available: true,
+  });
+  runVerificationVnrBrain({
+    session_id: birthdayLimitSession,
+    check_birthday_result: 'failed',
+    birthday_check_attempts: 1,
+  });
+  runVerificationVnrBrain({
+    session_id: birthdayLimitSession,
+    latest_customer_input: '03.05.1948',
+    birthday_system_available: true,
+  });
+  const birthdayLimit = runVerificationVnrBrain({
+    session_id: birthdayLimitSession,
     check_birthday_result: 'failed',
     birthday_check_attempts: 2,
   });

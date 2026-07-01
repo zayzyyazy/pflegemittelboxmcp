@@ -69,7 +69,12 @@ export const leapingVerificationBrainZod = {
     .enum(['found', 'not_found', 'error', 'not_called'])
     .optional(),
   get_customer_by_insurance_number_result: z
-    .enum(['found', 'not_found', 'error', 'not_called'])
+    .union([
+      z.enum(['found', 'not_found', 'error', 'not_called']),
+      z.record(z.unknown()),
+      z.boolean(),
+      z.string(),
+    ])
     .optional(),
   check_birthday_result: z.enum(['success', 'failed', 'error', 'not_called']).optional(),
   check_birthday_error: z.string().optional(),

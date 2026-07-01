@@ -36,7 +36,7 @@ export interface VerificationVnrBrainInput {
   vnr_candidate?: string;
   vnr_confirmed?: boolean;
   check_insurance_number_format_result?: 'valid' | 'invalid' | 'error' | 'not_called';
-  get_customer_by_insurance_number_result?: 'found' | 'not_found' | 'error' | 'not_called';
+  get_customer_by_insurance_number_result?: unknown;
   birthday_customer?: string;
   check_birthday_result?: 'success' | 'failed' | 'error' | 'not_called';
   check_birthday_error?: string;
@@ -113,6 +113,9 @@ interface VerificationSessionState extends VerificationSessionStoredValues {
   pending_birthday_month: number | null;
   awaiting_field: AddressAwaitingField | null;
   attempts: VerificationSessionAttempts;
+  birthday_collected_before_vnr_lookup: boolean;
+  vnr_customer_birthday_collected: boolean;
+  vnr_awaiting_check_birthday_result: boolean;
 }
 
 type Confidence = 'high' | 'medium' | 'low';
@@ -263,6 +266,9 @@ function emptySessionState(): VerificationSessionState {
     pending_birthday_month: null,
     awaiting_field: null,
     attempts: emptyAttempts(),
+    birthday_collected_before_vnr_lookup: false,
+    vnr_customer_birthday_collected: false,
+    vnr_awaiting_check_birthday_result: false,
   };
 }
 
@@ -403,6 +409,8 @@ function normalizeLookupResult(value: unknown): 'found' | 'not_found' | 'error' 
   if (typeof value === 'boolean') return value ? 'found' : 'not_found';
   if (typeof value === 'object') {
     const record = value as Record<string, unknown>;
+    if (record.found === true) return 'found';
+    if (record.found === false) return 'not_found';
     const errorValue = asString(record.error) ?? asString(record.message);
     if (errorValue) {
       if (errorValue.toLowerCase().includes('kein kunde gefunden')) return 'not_found';
@@ -410,6 +418,30 @@ function normalizeLookupResult(value: unknown): 'found' | 'not_found' | 'error' 
     }
     if ('id' in record || 'customer_id' in record) return 'found';
     return undefined;
+  }
+  return undefined;
+}
+
+function lookupResultReceivedThisTurn(rawInput: VerificationVnrBrainInput): boolean {
+  return rawInput.get_customer_by_insurance_number_result !== undefined;
+}
+
+function getVnrAuthBirthdayCustomer(
+  session: VerificationSessionState | null,
+  rawInput: VerificationVnrBrainInput,
+  birthdayMerge: ReturnType<typeof mergeBirthday>,
+  lookupFound: boolean
+): string | undefined {
+  if (!lookupFound) return undefined;
+
+  if (rawInput.latest_customer_input && birthdayMerge.value) {
+    return birthdayMerge.value;
+  }
+  if (session?.vnr_customer_birthday_collected && session.birthday_customer) {
+    return session.birthday_customer;
+  }
+  if (session?.birthday_collected_before_vnr_lookup && session.birthday_customer) {
+    return session.birthday_customer;
   }
   return undefined;
 }
@@ -1183,7 +1215,7 @@ export function coerceVerificationVnrBrainInput(input: Record<string, unknown>):
     vnr_candidate: normalizeVnr(asString(input.vnr_candidate)),
     vnr_confirmed: asBoolean(input.vnr_confirmed),
     check_insurance_number_format_result: normalizeFormatResult(input.check_insurance_number_format_result),
-    get_customer_by_insurance_number_result: normalizeLookupResult(input.get_customer_by_insurance_number_result),
+    get_customer_by_insurance_number_result: input.get_customer_by_insurance_number_result,
     birthday_customer: asString(input.birthday_customer),
     check_birthday_result: normalizeCheckBirthdayResult(input.check_birthday_result),
     check_birthday_error: asString(input.check_birthday_error),
@@ -1764,6 +1796,7 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
     session?.get_customer_by_insurance_number_result
   );
   const lookupFound = isLookupFound(mergedLookupResult);
+  const lookupCallbackTurn = lookupResultReceivedThisTurn(rawInput);
   const storedVnrCandidate = session?.vnr_candidate ?? undefined;
   const hasValidConfirmedVnr =
     (rawInput.vnr_confirmed === true || session?.vnr_confirmed === true) &&
@@ -1827,8 +1860,22 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
     birthday_request_count: rawInput.birthday_request_count ?? session?.attempts.birthday_collection_attempts ?? 0,
     birthday_check_attempts: rawInput.birthday_check_attempts ?? session?.attempts.birthday_check_attempts ?? 0,
   };
+  if (session?.birthday_customer && !isLookupFound(session.get_customer_by_insurance_number_result)) {
+    session.birthday_collected_before_vnr_lookup = true;
+  }
+  const vnrAuthBirthday = getVnrAuthBirthdayCustomer(session, rawInput, birthdayMerge, lookupFound);
+  let effectiveCheckBirthdayResult = input.check_birthday_result;
+  if (lookupCallbackTurn && lookupFound) {
+    effectiveCheckBirthdayResult = 'not_called';
+  } else if (
+    effectiveCheckBirthdayResult === 'success' &&
+    !session?.vnr_awaiting_check_birthday_result
+  ) {
+    effectiveCheckBirthdayResult = 'not_called';
+  }
+  input.check_birthday_result = effectiveCheckBirthdayResult;
   const insuranceNumberArgs = input.vnr_candidate ? buildInsuranceNumberFunctionArgs(input.vnr_candidate) : null;
-  const checkBirthdayArgs = input.birthday_customer ? buildCheckBirthdayFunctionArgs(input.birthday_customer) : null;
+  const checkBirthdayArgs = vnrAuthBirthday ? buildCheckBirthdayFunctionArgs(vnrAuthBirthday) : null;
   const finalize = (result: VerificationMethodBrainResult) =>
     finalizeGenericBrainResult(
       { ...result, safety_flags: [...extraSafetyFlags, ...result.safety_flags] },
@@ -1848,7 +1895,18 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
       session.vnr_candidate = input.vnr_candidate;
     }
     if (input.vnr_confirmed !== undefined) session.vnr_confirmed = input.vnr_confirmed;
-    if (birthdayMerge.value) session.birthday_customer = birthdayMerge.value;
+    const lookupAlreadyFound = isLookupFound(session.get_customer_by_insurance_number_result);
+    if (birthdayMerge.value) {
+      if (!lookupAlreadyFound && !lookupCallbackTurn) {
+        session.birthday_collected_before_vnr_lookup = true;
+        session.birthday_customer = birthdayMerge.value;
+      } else if (rawInput.latest_customer_input && lookupFound) {
+        session.vnr_customer_birthday_collected = true;
+        session.birthday_customer = birthdayMerge.value;
+      } else if (!lookupCallbackTurn) {
+        session.birthday_customer = birthdayMerge.value;
+      }
+    }
     if (birthdayMerge.parse.status === 'complete') {
       session.pending_birthday_day = null;
       session.pending_birthday_month = null;
@@ -1868,27 +1926,31 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
       }
     }
     if (rawInput.check_birthday_result !== undefined) {
-      session.check_birthday_result = input.check_birthday_result ?? 'not_called';
-      if (input.check_birthday_result !== 'not_called') {
+      session.check_birthday_result = effectiveCheckBirthdayResult ?? 'not_called';
+      if (effectiveCheckBirthdayResult !== 'not_called') {
         session.attempts.birthday_check_attempts += 1;
+        if (effectiveCheckBirthdayResult === 'success' || effectiveCheckBirthdayResult === 'failed') {
+          session.vnr_awaiting_check_birthday_result = false;
+        }
       }
     }
     if (rawInput.check_birthday_error) session.check_birthday_error = rawInput.check_birthday_error;
     if (rawInput.latest_customer_input && !input.vnr_candidate && !parsedVnr.awaiting_letter) {
       session.attempts.vnr_request_attempts += 1;
     }
-    if (rawInput.latest_customer_input && isLookupFound(input.get_customer_by_insurance_number_result) && !birthdayMerge.value) {
+    if (rawInput.latest_customer_input && isLookupFound(input.get_customer_by_insurance_number_result) && !vnrAuthBirthday) {
       session.attempts.birthday_collection_attempts += 1;
     }
   }
 
   if (
     rawInput.latest_customer_input &&
-    input.birthday_customer &&
-    input.check_birthday_result === 'failed' &&
+    vnrAuthBirthday &&
+    effectiveCheckBirthdayResult === 'failed' &&
     (input.birthday_check_attempts ?? 0) < 2
   ) {
     input.check_birthday_result = 'not_called';
+    effectiveCheckBirthdayResult = 'not_called';
     if (session) session.check_birthday_result = 'not_called';
   }
 
@@ -2022,7 +2084,7 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
 
   // Customer found by VNR identifies them; birthday authentication is still required before weiter.
   if (isLookupFound(input.get_customer_by_insurance_number_result)) {
-    if (input.check_birthday_result === 'success') {
+    if (effectiveCheckBirthdayResult === 'success' && vnrAuthBirthday) {
       return finalize(makeResult('vnr', {
         ok: true,
         next_action: 'TRANSITION_WEITER',
@@ -2034,7 +2096,7 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
       }));
     }
 
-    if (birthdayMerge.parse.status === 'incomplete_year') {
+    if (birthdayMerge.parse.status === 'incomplete_year' && rawInput.latest_customer_input) {
       const result = makeResult('vnr', {
         ok: true,
         next_action: 'ASK_BIRTH_YEAR',
@@ -2046,7 +2108,7 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
       return finalize(result);
     }
 
-    if (birthdayMerge.parse.status === 'impossible') {
+    if (birthdayMerge.parse.status === 'impossible' && rawInput.latest_customer_input) {
       return finalize(makeResult('vnr', {
         ok: false,
         next_action: 'ASK_BIRTHDAY',
@@ -2057,7 +2119,7 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
       }));
     }
 
-    if (!input.birthday_customer) {
+    if (!vnrAuthBirthday) {
       if ((input.birthday_request_count ?? 0) >= 2) {
         return finalize(makeResult('vnr', {
           ok: false,
@@ -2081,7 +2143,7 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
       return finalize(result);
     }
 
-    if (input.check_birthday_result === 'failed') {
+    if (effectiveCheckBirthdayResult === 'failed') {
       if ((input.birthday_check_attempts ?? 0) >= 2 || (input.birthday_request_count ?? 0) >= 2) {
         return finalize(makeResult('vnr', {
           ok: false,
@@ -2127,6 +2189,7 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
       function_arguments: checkBirthdayArgs?.function_arguments,
       leaping_function_arguments: checkBirthdayArgs?.leaping_function_arguments,
     });
+    if (session) session.vnr_awaiting_check_birthday_result = true;
     return finalize(result);
   }
 
