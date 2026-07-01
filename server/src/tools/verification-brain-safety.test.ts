@@ -168,7 +168,7 @@ test('6. session log extraction stores session_id, active_brain, action_type, fu
   assert.equal(meta.session_id, sessionId);
   assert.equal(meta.active_brain, 'address');
   assert.equal(meta.action_type, 'CALL_FUNCTION');
-  assert.equal(meta.function_name, 'get_customer_by_plz_geb');
+  assert.equal(meta.function_name, 'pmb_safe_get_customer_by_plz_geb');
   assert.equal(meta.status, 'ok');
 });
 

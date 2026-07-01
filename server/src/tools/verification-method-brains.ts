@@ -6,6 +6,10 @@ import {
   leapingVnrLookupFieldsPresent,
 } from './leaping-field-bindings.js';
 import { parseVnrUtterance } from './verification-vnr-parser.js';
+import {
+  PMB_SAFE_GET_CUSTOMER_BY_INSURANCE_NUMBER,
+  PMB_SAFE_GET_CUSTOMER_BY_PLZ_GEB,
+} from './safe-customer-lookup.js';
 
 export interface VerificationPhoneBrainInput {
   session_id?: string;
@@ -1878,7 +1882,7 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
           reason: 'Customer confirmed the previously understood address values, so a retry lookup is allowed.',
           missing_fields: [],
           safety_flags: ['address_retry', 'never_call_check_birthday_in_address_path'],
-          function_to_call: 'get_customer_by_plz_geb',
+          function_to_call: PMB_SAFE_GET_CUSTOMER_BY_PLZ_GEB,
           function_arguments: plzGebArgs?.function_arguments,
           leaping_function_arguments: plzGebArgs?.leaping_function_arguments,
           awaiting_field: 'confirm_address',
@@ -1939,7 +1943,7 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
       reason: 'PLZ, house number, and birthday are complete.',
       missing_fields: [],
       safety_flags: ['never_call_check_birthday_in_address_path'],
-      function_to_call: 'get_customer_by_plz_geb',
+      function_to_call: PMB_SAFE_GET_CUSTOMER_BY_PLZ_GEB,
       function_arguments: plzGebArgs?.function_arguments,
       leaping_function_arguments: plzGebArgs?.leaping_function_arguments,
       awaiting_field: null,
@@ -2270,7 +2274,7 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
         'Confirmed VNR passed internal format validation. Customer lookup is the next safe step before birthday authentication.',
       missing_fields: [],
       safety_flags: ['internal_vnr_format_valid', 'blocked_check_birthday_before_customer_lookup'],
-      function_to_call: 'get_customer_by_insurance_number',
+      function_to_call: PMB_SAFE_GET_CUSTOMER_BY_INSURANCE_NUMBER,
       function_arguments: insuranceNumberArgs?.function_arguments,
       leaping_function_arguments: insuranceNumberArgs?.leaping_function_arguments,
     });

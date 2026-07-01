@@ -21,7 +21,7 @@ test('calls address lookup when PLZ house number and birthday are complete', () 
   });
 
   assert.equal(result.next_action, 'CALL_GET_CUSTOMER_BY_PLZ_GEB');
-  assert.equal(result.function_to_call, 'get_customer_by_plz_geb');
+  assert.equal(result.function_to_call, 'pmb_safe_get_customer_by_plz_geb');
 });
 
 test('transitions directly after address lookup found customer', () => {
@@ -93,5 +93,5 @@ test('looks up customer by confirmed valid VNR', () => {
   });
 
   assert.equal(result.next_action, 'CALL_GET_CUSTOMER_BY_INSURANCE_NUMBER');
-  assert.equal(result.function_to_call, 'get_customer_by_insurance_number');
+  assert.equal(result.function_to_call, 'pmb_safe_get_customer_by_insurance_number');
 });

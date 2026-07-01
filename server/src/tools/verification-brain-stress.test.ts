@@ -15,10 +15,14 @@ type BrainName = 'address' | 'phone' | 'vnr';
 const ADDRESS_ILLEGAL = new Set([
   'check_birthday',
   'check_insurance_number_format',
-  'get_customer_by_insurance_number',
+  'pmb_safe_get_customer_by_insurance_number',
 ]);
-const PHONE_ILLEGAL = new Set(['get_customer_by_plz_geb', 'check_insurance_number_format', 'get_customer_by_insurance_number']);
-const VNR_ILLEGAL = new Set(['get_customer_by_plz_geb']);
+const PHONE_ILLEGAL = new Set([
+  'pmb_safe_get_customer_by_plz_geb',
+  'check_insurance_number_format',
+  'pmb_safe_get_customer_by_insurance_number',
+]);
+const VNR_ILLEGAL = new Set(['pmb_safe_get_customer_by_plz_geb']);
 
 interface ScenarioStep {
   label?: string;
@@ -200,7 +204,7 @@ const STRESS_SCENARIOS: StressScenario[] = [
     ],
     expect: {
       action_type: 'CALL_FUNCTION',
-      function_name: 'get_customer_by_plz_geb',
+      function_name: 'pmb_safe_get_customer_by_plz_geb',
       stored_plz: '41372',
       stored_house_number: '100',
       stored_birthday: '1956-03-16',
@@ -280,7 +284,7 @@ const STRESS_SCENARIOS: StressScenario[] = [
     ],
     expect: {
       action_type: 'CALL_FUNCTION',
-      function_name: 'get_customer_by_plz_geb',
+      function_name: 'pmb_safe_get_customer_by_plz_geb',
       stored_birthday: '1956-03-16',
       function_arguments: { plz: '41372', hnr: '100', bday: '1956-03-16' },
     },
@@ -298,7 +302,7 @@ const STRESS_SCENARIOS: StressScenario[] = [
     ],
     expect: {
       action_type: 'CALL_FUNCTION',
-      function_name: 'get_customer_by_plz_geb',
+      function_name: 'pmb_safe_get_customer_by_plz_geb',
       stored_birthday: '1956-03-16',
       custom: (_r, history) => (history[0].next_action === 'ASK_BIRTHDAY' ? null : 'expected ASK_BIRTHDAY after impossible date'),
     },
@@ -316,7 +320,7 @@ const STRESS_SCENARIOS: StressScenario[] = [
     ],
     expect: {
       action_type: 'CALL_FUNCTION',
-      function_name: 'get_customer_by_plz_geb',
+      function_name: 'pmb_safe_get_customer_by_plz_geb',
       stored_birthday: '1956-03-16',
       custom: (_r, history) =>
         history[0].stored_values?.birthday_customer === '2030-03-16' ? 'future birthday was stored' : null,
@@ -336,7 +340,7 @@ const STRESS_SCENARIOS: StressScenario[] = [
     ],
     expect: {
       action_type: 'CALL_FUNCTION',
-      function_name: 'get_customer_by_plz_geb',
+      function_name: 'pmb_safe_get_customer_by_plz_geb',
       stored_house_number: '101',
       function_arguments: { plz: '41372', hnr: '101', bday: '1956-03-16' },
     },
@@ -357,7 +361,7 @@ const STRESS_SCENARIOS: StressScenario[] = [
     ],
     expect: {
       action_type: 'CALL_FUNCTION',
-      function_name: 'get_customer_by_plz_geb',
+      function_name: 'pmb_safe_get_customer_by_plz_geb',
       stored_plz: '22765',
       function_arguments: { plz: '22765', hnr: '100', bday: '1956-03-16' },
     },
@@ -375,7 +379,7 @@ const STRESS_SCENARIOS: StressScenario[] = [
     ],
     expect: {
       action_type: 'CALL_FUNCTION',
-      function_name: 'get_customer_by_plz_geb',
+      function_name: 'pmb_safe_get_customer_by_plz_geb',
       function_arguments: { plz: '41372', hnr: '100', bday: '1956-03-16' },
       min_attempts: { address_lookup_attempts: 1 },
     },
@@ -389,7 +393,7 @@ const STRESS_SCENARIOS: StressScenario[] = [
     steps: [
       { input: { plz: '41372', house_number: '100', birthday_customer: '1956-03-16', get_customer_by_plz_geb_result: 'not_found', address_lookup_attempts: 2 } },
     ],
-    expect: { next_action: 'FALLBACK_TO_VNR', never_function: 'get_customer_by_plz_geb' },
+    expect: { next_action: 'FALLBACK_TO_VNR', never_function: 'pmb_safe_get_customer_by_plz_geb' },
   },
   {
     id: 14,
@@ -546,7 +550,7 @@ const STRESS_SCENARIOS: StressScenario[] = [
     ],
     expect: {
       custom: (r) =>
-        r.function_to_call === 'get_customer_by_insurance_number'
+        r.function_to_call === 'pmb_safe_get_customer_by_insurance_number'
           ? 'lookup called on partial VNR'
           : ['ASK_VNR', 'ASK_VNR_LETTER', 'CONFIRM_VNR'].includes(r.next_action)
             ? null
@@ -577,7 +581,7 @@ const STRESS_SCENARIOS: StressScenario[] = [
     ],
     expect: {
       action_type: 'CALL_FUNCTION',
-      function_name: 'get_customer_by_insurance_number',
+      function_name: 'pmb_safe_get_customer_by_insurance_number',
       function_arguments: { insurance_number: 'L039359923' },
     },
   },
@@ -590,7 +594,7 @@ const STRESS_SCENARIOS: StressScenario[] = [
     steps: [
       { input: { vnr_candidate: '039359923', vnr_confirmed: true } },
     ],
-    expect: { next_action: 'ASK_VNR_LETTER', never_function: 'get_customer_by_insurance_number' },
+    expect: { next_action: 'ASK_VNR_LETTER', never_function: 'pmb_safe_get_customer_by_insurance_number' },
   },
   {
     id: 28,
@@ -601,7 +605,7 @@ const STRESS_SCENARIOS: StressScenario[] = [
     steps: [
       { input: { vnr_candidate: 'L039359923', vnr_confirmed: true } },
     ],
-    expect: { action_type: 'CALL_FUNCTION', function_name: 'get_customer_by_insurance_number' },
+    expect: { action_type: 'CALL_FUNCTION', function_name: 'pmb_safe_get_customer_by_insurance_number' },
   },
   {
     id: 29,
@@ -747,7 +751,7 @@ const STRESS_SCENARIOS: StressScenario[] = [
     ],
     expect: {
       action_type: 'CALL_FUNCTION',
-      function_name: 'get_customer_by_plz_geb',
+      function_name: 'pmb_safe_get_customer_by_plz_geb',
       custom: (r) => (r.transition_name === 'weiter' ? 'address transitioned weiter from check_birthday_result' : null),
     },
   },

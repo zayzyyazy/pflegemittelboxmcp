@@ -49,6 +49,12 @@ import {
   toLoggedVerificationBrainResponse,
 } from './tools/verification-brain-response.js';
 import { runVerificationBrain } from './tools/verification-brain.js';
+import {
+  coerceSafeInsuranceLookupInput,
+  coerceSafePlzGebLookupInput,
+  runSafeGetCustomerByInsuranceNumber,
+  runSafeGetCustomerByPlzGeb,
+} from './tools/safe-customer-lookup.js';
 import { logCall } from './db.js';
 
 // Active legacy SSE sessions — used by POST /mcp/messages
@@ -117,6 +123,42 @@ export function createMcpServer(): McpServer {
     'pmb_health_check',
     'Alias for health_check. Returns service health status.',
     async () => runHealthCheck('pmb_health_check')
+  );
+
+  server.tool(
+    'pmb_safe_get_customer_by_plz_geb',
+    'Safe CRM lookup by PLZ, house number, and birthday. Calls Marie internally and returns only ' +
+      '{ found: true, id, birthday_present } or { found: false }. No email, delivery, or VIP fields.',
+    {
+      plz: z.string().describe('5-digit German PLZ.'),
+      hnr: z.string().optional().describe('House number (alias: house_number).'),
+      house_number: z.string().optional().describe('House number (alias: hnr).'),
+      bday: z.string().optional().describe('Birthday YYYY-MM-DD (alias: birthday).'),
+      birthday: z.string().optional().describe('Birthday YYYY-MM-DD (alias: bday).'),
+    },
+    async (input) => {
+      const start = Date.now();
+      const coerced = coerceSafePlzGebLookupInput(input);
+      const result = await runSafeGetCustomerByPlzGeb(coerced);
+      logCall('pmb_safe_get_customer_by_plz_geb', coerced, result, null, Date.now() - start);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'pmb_safe_get_customer_by_insurance_number',
+    'Safe CRM lookup by insurance number (VNR). Calls Marie internally and returns only ' +
+      '{ found: true, id, birthday_present } or { found: false }. No email, delivery, or VIP fields.',
+    {
+      insurance_number: z.string().describe('Normalized VNR, e.g. L039359923.'),
+    },
+    async ({ insurance_number }) => {
+      const start = Date.now();
+      const coerced = coerceSafeInsuranceLookupInput({ insurance_number });
+      const result = await runSafeGetCustomerByInsuranceNumber(coerced);
+      logCall('pmb_safe_get_customer_by_insurance_number', coerced, result, null, Date.now() - start);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
   );
 
   server.tool(

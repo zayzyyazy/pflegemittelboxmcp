@@ -38,6 +38,12 @@ import {
   coerceVerificationBrainInput,
   runVerificationBrain,
 } from '../tools/verification-brain.js';
+import {
+  coerceSafeInsuranceLookupInput,
+  coerceSafePlzGebLookupInput,
+  runSafeGetCustomerByInsuranceNumber,
+  runSafeGetCustomerByPlzGeb,
+} from '../tools/safe-customer-lookup.js';
 
 export function sanitizeGuardrailInput(input: Record<string, unknown>) {
   const nullableString = (value: unknown): string | null => {
@@ -263,6 +269,38 @@ export const TOOL_DEFS = [
     inputSchema: { type: 'object', properties: {}, required: [] },
   },
   {
+    name: 'pmb_safe_get_customer_by_plz_geb',
+    description:
+      'Safe CRM lookup by PLZ, house number, and birthday. Returns only { found, id?, birthday_present? }.',
+    category: 'lookup',
+    safe: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plz: { type: 'string', description: '5-digit German PLZ.' },
+        hnr: { type: 'string', description: 'House number (alias: house_number).' },
+        house_number: { type: 'string' },
+        bday: { type: 'string', description: 'Birthday YYYY-MM-DD (alias: birthday).' },
+        birthday: { type: 'string' },
+      },
+      required: ['plz'],
+    },
+  },
+  {
+    name: 'pmb_safe_get_customer_by_insurance_number',
+    description:
+      'Safe CRM lookup by insurance number (VNR). Returns only { found, id?, birthday_present? }.',
+    category: 'lookup',
+    safe: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        insurance_number: { type: 'string', description: 'Normalized VNR, e.g. L039359923.' },
+      },
+      required: ['insurance_number'],
+    },
+  },
+  {
     name: 'pmb_health_check',
     description: 'Alias for health_check. Returns service health status. Use this to verify the MCP server is reachable from Leaping.',
     category: 'utility',
@@ -349,6 +387,10 @@ export async function runDashboardTool(name: string, input: Record<string, unkno
         severity: null,
       });
       output = result;
+    } else if (name === 'pmb_safe_get_customer_by_plz_geb') {
+      output = await runSafeGetCustomerByPlzGeb(coerceSafePlzGebLookupInput(input));
+    } else if (name === 'pmb_safe_get_customer_by_insurance_number') {
+      output = await runSafeGetCustomerByInsuranceNumber(coerceSafeInsuranceLookupInput(input));
     } else if (name === 'health_check' || name === 'pmb_health_check') {
       output = { ok: true, service: 'pflegemittelbox-mcp', version: '0.1.0' };
     } else {

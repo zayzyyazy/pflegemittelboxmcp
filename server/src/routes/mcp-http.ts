@@ -63,6 +63,12 @@ import {
   coerceVerificationBrainInput,
   runVerificationBrain,
 } from '../tools/verification-brain.js';
+import {
+  coerceSafeInsuranceLookupInput,
+  coerceSafePlzGebLookupInput,
+  runSafeGetCustomerByInsuranceNumber,
+  runSafeGetCustomerByPlzGeb,
+} from '../tools/safe-customer-lookup.js';
 import { logCall } from '../db.js';
 
 export const mcpRouter = Router();
@@ -283,6 +289,34 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: 'pmb_safe_get_customer_by_plz_geb',
+    description:
+      'Safe CRM lookup by PLZ, house number, and birthday. Returns only { found, id?, birthday_present? }.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plz: { type: 'string', description: '5-digit German PLZ.' },
+        hnr: { type: 'string', description: 'House number (alias: house_number).' },
+        house_number: { type: 'string' },
+        bday: { type: 'string', description: 'Birthday YYYY-MM-DD (alias: birthday).' },
+        birthday: { type: 'string' },
+      },
+      required: ['plz'],
+    },
+  },
+  {
+    name: 'pmb_safe_get_customer_by_insurance_number',
+    description:
+      'Safe CRM lookup by insurance number (VNR). Returns only { found, id?, birthday_present? }.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        insurance_number: { type: 'string', description: 'Normalized VNR, e.g. L039359923.' },
+      },
+      required: ['insurance_number'],
+    },
+  },
+  {
     name: 'pmb_health_check',
     description:
       'Alias for health_check. Returns service health status. Use to verify the MCP server is reachable from Leaping.',
@@ -443,6 +477,20 @@ async function runTool(
         gmailAppPassword: appConfig.GMAIL_SMTP_APP_PASSWORD,
       });
       logCall('pmb_post_call_email_notifier', input, result, null, Date.now() - start);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+
+    case 'pmb_safe_get_customer_by_plz_geb': {
+      const coerced = coerceSafePlzGebLookupInput(args);
+      const result = await runSafeGetCustomerByPlzGeb(coerced);
+      logCall('pmb_safe_get_customer_by_plz_geb', coerced, result, null, Date.now() - start);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+
+    case 'pmb_safe_get_customer_by_insurance_number': {
+      const coerced = coerceSafeInsuranceLookupInput(args);
+      const result = await runSafeGetCustomerByInsuranceNumber(coerced);
+      logCall('pmb_safe_get_customer_by_insurance_number', coerced, result, null, Date.now() - start);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
 

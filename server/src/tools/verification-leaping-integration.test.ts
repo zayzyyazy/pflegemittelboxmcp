@@ -248,7 +248,7 @@ test('17. confirmed VNR with invalid shape asks for correction before lookup', (
     vnr_confirmed: true,
   });
   assert.equal(result.next_action, 'ASK_VNR_LETTER');
-  assert.notEqual(result.function_name, 'get_customer_by_insurance_number');
+  assert.notEqual(result.function_name, 'pmb_safe_get_customer_by_insurance_number');
 });
 
 test('18. VNR lookup Kein Kunde gefunden does not ask birthday', () => {
