@@ -15,6 +15,9 @@ const VNR_BIRTHDAY_FIRST_ASK_SAY =
 const VNR_BIRTHDAY_CHECK_FAILED_RETRY_SAY =
   'Das Geburtsdatum konnte ich leider nicht bestätigen. Bitte nennen Sie mir Ihr Geburtsdatum noch einmal vollständig mit Tag, Monat und Jahr.';
 
+const VNR_BIRTHDAY_PARSE_RETRY_SAY =
+  'Ich habe das Geburtsdatum leider akustisch nicht sicher verstanden. Bitte nennen Sie es im Format Tag, Monat und Jahr.';
+
 function setupVnrLookupFoundAskBirthday(sessionId: string) {
   runVerificationVnrBrain({
     session_id: sessionId,
@@ -472,4 +475,93 @@ test('VNR success path still transitions weiter after minimal failed retry flow'
   assert.equal(done.transition_to, 'weiter');
   assert.equal(leaping.action_type, 'TRANSITION');
   assert.equal(leaping.transition_name, 'weiter');
+});
+
+test('VNR spoken STT typo sechzen märz fünfzig returns CALL_FUNCTION check_birthday', () => {
+  const sessionId = `${SESSION}-stt-typo`;
+  setupVnrLookupFoundAskBirthday(sessionId);
+
+  const parsed = runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'sechzen märz fünfzig',
+    birthday_system_available: true,
+  });
+  const leaping = toLeapingVerificationBrainResponse(parsed);
+
+  assert.equal(parsed.next_action, 'CALL_CHECK_BIRTHDAY');
+  assert.equal(parsed.function_to_call, 'check_birthday');
+  assert.deepEqual(parsed.function_arguments, { birthday: '1950-03-16' });
+  assert.equal(leaping.function_name, 'check_birthday');
+});
+
+test('VNR spoken sechzehnter märz neunzehnhundertfünfzig returns CALL_FUNCTION check_birthday', () => {
+  const sessionId = `${SESSION}-stt-long-year`;
+  setupVnrLookupFoundAskBirthday(sessionId);
+
+  const parsed = runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'sechzehnter märz neunzehnhundertfünfzig',
+    birthday_system_available: true,
+  });
+
+  assert.equal(parsed.next_action, 'CALL_CHECK_BIRTHDAY');
+  assert.deepEqual(parsed.function_arguments, { birthday: '1950-03-16' });
+});
+
+test('VNR unparseable birthday in auth phase returns acoustic retry not first-time ask', () => {
+  const sessionId = `${SESSION}-stt-unparseable`;
+  setupVnrLookupFoundAskBirthday(sessionId);
+
+  const retry = runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'irgendwas komplett unverständlich heute',
+    birthday_system_available: true,
+  });
+
+  assert.equal(retry.next_action, 'ASK_BIRTHDAY');
+  assert.equal(retry.say, VNR_BIRTHDAY_PARSE_RETRY_SAY);
+  assert.notEqual(retry.say, VNR_BIRTHDAY_FIRST_ASK_SAY);
+  assert.ok(retry.safety_flags.includes('birthday_parse_failed'));
+});
+
+test('VNR spoken birthday then failed check still gives smart retry', () => {
+  const sessionId = `${SESSION}-stt-failed-check`;
+  setupVnrLookupFoundAskBirthday(sessionId);
+
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'sechzehn märz fünfzig',
+    birthday_system_available: true,
+  });
+
+  const failed = runVerificationVnrBrain(
+    coerceVerificationVnrBrainInput({
+      session_id: sessionId,
+      check_birthday_result: 'failed',
+    })
+  );
+
+  assert.equal(failed.next_action, 'ASK_BIRTHDAY');
+  assert.equal(failed.say, VNR_BIRTHDAY_CHECK_FAILED_RETRY_SAY);
+});
+
+test('VNR spoken birthday then success still transitions weiter', () => {
+  const sessionId = `${SESSION}-stt-success`;
+  setupVnrLookupFoundAskBirthday(sessionId);
+
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'sechzehnter dritter fünfzig',
+    birthday_system_available: true,
+  });
+
+  const done = runVerificationVnrBrain(
+    coerceVerificationVnrBrainInput({
+      session_id: sessionId,
+      check_birthday_result: 'success',
+    })
+  );
+
+  assert.equal(done.next_action, 'TRANSITION_WEITER');
+  assert.equal(done.transition_to, 'weiter');
 });
