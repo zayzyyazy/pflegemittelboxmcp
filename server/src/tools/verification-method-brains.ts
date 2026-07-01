@@ -223,6 +223,65 @@ const MONTH_WORDS: Record<string, number> = {
   dez: 12,
 };
 
+const ORDINAL_MONTH_WORDS: Record<string, number> = {
+  erste: 1,
+  erster: 1,
+  ersten: 1,
+  erstem: 1,
+  zweite: 2,
+  zweiter: 2,
+  zweiten: 2,
+  zweitem: 2,
+  dritte: 3,
+  dritter: 3,
+  dritten: 3,
+  drittem: 3,
+  vierte: 4,
+  vierter: 4,
+  vierten: 4,
+  viertem: 4,
+  funfte: 5,
+  fuenfte: 5,
+  fünfte: 5,
+  funfter: 5,
+  fuenfter: 5,
+  fünfter: 5,
+  funftem: 5,
+  fuenftem: 5,
+  sechste: 6,
+  sechster: 6,
+  sechsten: 6,
+  siebte: 7,
+  siebter: 7,
+  siebten: 7,
+  achte: 8,
+  achter: 8,
+  achten: 8,
+  neunte: 9,
+  neunter: 9,
+  neunten: 9,
+  zehnte: 10,
+  zehnter: 10,
+  zehnten: 10,
+  elfte: 11,
+  elfter: 11,
+  elften: 11,
+  zwoelfte: 12,
+  zwoelfter: 12,
+  zwoelften: 12,
+  zwoelftem: 12,
+};
+
+const BIRTHDAY_STT_TOKEN_REPAIRS: Record<string, string> = {
+  sechzen: 'sechzehn',
+  sechszehn: 'sechzehn',
+  sechzeen: 'sechzehn',
+  siebsen: 'siebzehn',
+  siebzeen: 'siebzehn',
+  achtzeen: 'achtzehn',
+  neunzeen: 'neunzehn',
+};
+
 const HOUSE_NUMBER_SUFFIX_WORDS = new Set(['a', 'b', 'c', 'd', 'alpha', 'beta']);
 const YES_WORDS = ['ja', 'jawohl', 'stimmt', 'genau', 'korrekt', 'richtig', 'das stimmt'];
 const FUNCTION_RESULT_LIKE_INPUTS = ['valid', 'true', 'false', 'found', 'not_found', 'kein kunde gefunden'];
@@ -310,6 +369,29 @@ function asNumber(value: unknown): number | undefined {
     const parsed = Number(value);
     if (Number.isFinite(parsed)) return parsed;
   }
+  return undefined;
+}
+
+function inferPhoneLookupFoundFromLeapingInput(input: Record<string, unknown>): boolean | undefined {
+  const fromFlag = asBoolean(input.phone_lookup_found);
+  if (fromFlag === true) return true;
+  if (fromFlag === false) return false;
+
+  const phoneFlagText = asString(input.phone_lookup_found);
+  if (phoneFlagText) {
+    const normalized = phoneFlagText.toLowerCase();
+    if (normalized === 'false' || normalized.includes('kein kunde gefunden')) return false;
+    return true;
+  }
+
+  const idPhone = asString(input.id_phone);
+  if (idPhone) return true;
+
+  const id = asString(input.id);
+  if (id && (input.id_phone !== undefined || input.phone_lookup_found !== undefined)) {
+    return true;
+  }
+
   return undefined;
 }
 
@@ -544,16 +626,46 @@ function parseOrdinalToken(input: string): number | null {
   return parseGermanCardinalWord(repaired);
 }
 
-function inferYear(year: number): number {
-  if (year >= 100) return year;
-  return 1900 + year;
+function repairBirthdayToken(normalized: string): string {
+  return BIRTHDAY_STT_TOKEN_REPAIRS[normalized] ?? normalized;
+}
+
+function parseMonthToken(normalized: string): number | undefined {
+  const repaired = repairBirthdayToken(normalized);
+  return MONTH_WORDS[repaired] ?? ORDINAL_MONTH_WORDS[repaired];
+}
+
+function parseDayToken(input: string): number | null {
+  const repaired = repairBirthdayToken(normalizeToken(input));
+  return parseOrdinalToken(repaired) ?? parseGermanCardinalWord(repaired);
+}
+
+function inferBirthdayYear(year: number, day: number, month: number): number | null {
+  const nowYear = new Date().getUTCFullYear();
+  if (year >= 100) {
+    return year > nowYear ? null : year;
+  }
+
+  const candidate1900 = 1900 + year;
+  const candidate2000 = 2000 + year;
+  const isPlausibleAdultBirthYear = (fullYear: number): boolean => {
+    if (fullYear > nowYear) return false;
+    const age = nowYear - fullYear;
+    return age >= 18 && age <= 120;
+  };
+
+  const valid1900 = isPlausibleAdultBirthYear(candidate1900);
+  const valid2000 = isPlausibleAdultBirthYear(candidate2000);
+  if (valid2000 && !valid1900) return candidate2000;
+  if (valid1900 && !valid2000) return candidate1900;
+  if (valid1900 && valid2000) return candidate1900;
+  return candidate1900;
 }
 
 function toIsoDate(day: number, month: number, year: number): string | null {
   if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-  const inferredYear = inferYear(year);
-  const nowYear = new Date().getUTCFullYear();
-  if (inferredYear <= 0 || inferredYear > nowYear) return null;
+  const inferredYear = inferBirthdayYear(year, day, month);
+  if (inferredYear === null) return null;
   const date = new Date(Date.UTC(inferredYear, month - 1, day));
   if (
     date.getUTCFullYear() !== inferredYear ||
@@ -571,7 +683,7 @@ function parseGermanYearTokens(tokens: Token[], start: number): { year: number |
   for (let length = Math.min(4, tokens.length - start); length >= 1; length -= 1) {
     const joined = tokens
       .slice(start, start + length)
-      .map((token) => token.normalized)
+      .map((token) => repairBirthdayToken(token.normalized))
       .join('');
     const value = parseGermanCardinalWord(joined);
     if (value !== null) return { year: value, used: length };
@@ -596,11 +708,22 @@ function parseBirthday(rawText: string | undefined): BirthdayParseResult {
       : { status: 'impossible', iso: null, reason: 'Birthday looked numeric but was impossible or in the future.' };
   }
 
+  const spaceNumericMatch = rawText.match(/\b(\d{1,2})\s+(\d{1,2})\s+(\d{2,4})\b/);
+  if (spaceNumericMatch) {
+    const day = Number(spaceNumericMatch[1]);
+    const month = Number(spaceNumericMatch[2]);
+    const year = Number(spaceNumericMatch[3]);
+    const iso = toIsoDate(day, month, year);
+    return iso
+      ? { status: 'complete', iso, day, month, year }
+      : { status: 'impossible', iso: null, reason: 'Birthday looked numeric but was impossible or in the future.' };
+  }
+
   const tokens = tokenize(rawText);
   for (let i = 0; i < tokens.length; i += 1) {
-    const monthValue = MONTH_WORDS[tokens[i].normalized];
+    const monthValue = parseMonthToken(tokens[i].normalized);
     if (monthValue === undefined || i === 0) continue;
-    const dayValue = parseOrdinalToken(tokens[i - 1].normalized);
+    const dayValue = parseDayToken(tokens[i - 1].normalized);
     if (dayValue === null) continue;
     const { year, used } = parseGermanYearTokens(tokens, i + 1);
     if (year === null || used === 0) {
@@ -1095,7 +1218,8 @@ function maybeTransferHuman(method: 'phone' | 'address' | 'vnr', requested?: boo
 export function coerceVerificationPhoneBrainInput(input: Record<string, unknown>): VerificationPhoneBrainInput {
   return {
     session_id: asString(input.session_id),
-    phone_lookup_found: asBoolean(input.phone_lookup_found),
+    phone_lookup_found:
+      inferPhoneLookupFoundFromLeapingInput(input) ?? asBoolean(input.phone_lookup_found),
     latest_customer_input: asString(input.latest_customer_input),
     birthday_customer: asString(input.birthday_customer),
     check_birthday_result: normalizeCheckBirthdayResult(input.check_birthday_result),
@@ -1111,7 +1235,8 @@ export function coerceVerificationPhoneBrainInput(input: Record<string, unknown>
 export function coerceVerificationAddressBrainInput(input: Record<string, unknown>): VerificationAddressBrainInput {
   return {
     session_id: asString(input.session_id),
-    phone_lookup_found: asBoolean(input.phone_lookup_found),
+    phone_lookup_found:
+      inferPhoneLookupFoundFromLeapingInput(input) ?? asBoolean(input.phone_lookup_found),
     latest_customer_input: asString(input.latest_customer_input),
     plz: asString(input.plz),
     house_number: asString(input.house_number),
@@ -1943,13 +2068,62 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
   }
 
   if (birthdayMerge.parse.status === 'impossible') {
+    const say =
+      rawInput.latest_customer_input &&
+      (input.get_customer_by_insurance_number_result === 'found' ||
+        session?.get_customer_by_insurance_number_result === 'found')
+        ? 'Ich habe das Geburtsdatum leider akustisch nicht sicher verstanden. Bitte nennen Sie es im Format Tag, Monat und Jahr.'
+        : 'Das Geburtsdatum konnte ich so nicht verarbeiten. Bitte nennen Sie es noch einmal vollständig.';
     return finalize(makeResult('vnr', {
       ok: false,
       next_action: 'ASK_BIRTHDAY',
-      say: 'Das Geburtsdatum konnte ich so nicht verarbeiten. Bitte nennen Sie es noch einmal vollständig.',
+      say,
       reason: birthdayMerge.parse.reason ?? 'Birthday was impossible or ambiguous.',
       missing_fields: ['birthday_customer'],
       safety_flags: ['birthday_invalid'],
+    }));
+  }
+
+  const lookupFoundForBirthdayAuth =
+    input.get_customer_by_insurance_number_result === 'found' ||
+    session?.get_customer_by_insurance_number_result === 'found';
+
+  if (lookupFoundForBirthdayAuth && input.check_birthday_result === 'failed') {
+    if ((input.birthday_check_attempts ?? 0) >= 2 || (input.birthday_request_count ?? 0) >= 2) {
+      return finalize(makeResult('vnr', {
+        ok: false,
+        next_action: 'TRANSITION_NICHT_IDENTIFIZIERT',
+        say: 'Ich konnte Sie leider nicht eindeutig verifizieren.',
+        reason: 'Birthday check failed after the allowed retry limit.',
+        missing_fields: [],
+        safety_flags: ['birthday_check_limit_reached'],
+        transition_to: 'nicht_identifiziert',
+      }));
+    }
+
+    return finalize(makeResult('vnr', {
+      ok: true,
+      next_action: 'ASK_BIRTHDAY',
+      say: 'Das Geburtsdatum konnte ich leider nicht bestätigen. Bitte nennen Sie mir Ihr Geburtsdatum noch einmal vollständig mit Tag, Monat und Jahr.',
+      reason: 'Birthday check failed and a smart retry is required.',
+      missing_fields: ['birthday_customer'],
+      safety_flags: ['birthday_retry'],
+    }));
+  }
+
+  if (
+    lookupFoundForBirthdayAuth &&
+    !input.birthday_customer &&
+    rawInput.latest_customer_input &&
+    birthdayMerge.parse.status === 'missing'
+  ) {
+    return finalize(makeResult('vnr', {
+      ok: false,
+      next_action: 'ASK_BIRTHDAY',
+      say: 'Ich habe das Geburtsdatum leider akustisch nicht sicher verstanden. Bitte nennen Sie es im Format Tag, Monat und Jahr.',
+      reason: 'Birthday speech could not be parsed during VNR birthday auth.',
+      missing_fields: ['birthday_customer'],
+      safety_flags: ['birthday_parse_failed'],
     }));
   }
 
