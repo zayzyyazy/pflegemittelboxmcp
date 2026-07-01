@@ -40,6 +40,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function isVerificationBrainSplitResponse(value: unknown): value is VerificationBrainSplitResponse {
+  if (!isRecord(value)) return false;
+  const controller = value.controller;
+  const debug = value.debug;
+  if (!isRecord(controller) || !isRecord(debug)) return false;
+
+  return (
+    typeof controller.ok === 'boolean' &&
+    typeof controller.action_type === 'string' &&
+    typeof controller.say === 'string' &&
+    typeof controller.requires_followup_mcp_call === 'boolean' &&
+    typeof controller.active_brain === 'string' &&
+    typeof debug.method === 'string' &&
+    typeof debug.next_action === 'string' &&
+    typeof debug.reason === 'string' &&
+    Array.isArray(debug.missing_fields) &&
+    Array.isArray(debug.safety_flags)
+  );
+}
+
 function asString(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
@@ -175,8 +195,8 @@ export function sanitizeMcpToolOutput(toolName: string, output: unknown): unknow
     toolName === 'pmb_verification_address_brain' ||
     toolName === 'pmb_verification_vnr_brain'
   ) {
-    if (isRecord(output) && 'controller' in output && 'debug' in output) {
-      return sanitizeVerificationBrainSplitResponse(output as VerificationBrainSplitResponse);
+    if (isVerificationBrainSplitResponse(output)) {
+      return sanitizeVerificationBrainSplitResponse(output);
     }
     return output;
   }
