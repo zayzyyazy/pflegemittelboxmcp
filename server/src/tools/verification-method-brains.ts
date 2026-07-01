@@ -124,6 +124,7 @@ interface VerificationSessionState extends VerificationSessionStoredValues {
   birthday_collected_before_vnr_lookup: boolean;
   vnr_customer_birthday_collected: boolean;
   vnr_awaiting_check_birthday_result: boolean;
+  vnr_awaiting_customer_birthday: boolean;
   vnr_awaiting_insurance_lookup_result: boolean;
   vnr_birthday_auth_succeeded: boolean;
 }
@@ -279,6 +280,7 @@ function emptySessionState(): VerificationSessionState {
     birthday_collected_before_vnr_lookup: false,
     vnr_customer_birthday_collected: false,
     vnr_awaiting_check_birthday_result: false,
+    vnr_awaiting_customer_birthday: false,
     vnr_awaiting_insurance_lookup_result: false,
     vnr_birthday_auth_succeeded: false,
   };
@@ -530,6 +532,26 @@ function isVnrBirthdayAuthSucceeded(
   );
 }
 
+const VNR_BIRTHDAY_FIRST_ASK_SAY =
+  'Bitte nennen Sie mir zur Verifizierung Ihr Geburtsdatum.';
+
+const VNR_BIRTHDAY_CHECK_FAILED_RETRY_SAY =
+  'Das Geburtsdatum konnte ich leider nicht bestätigen. Bitte nennen Sie mir Ihr Geburtsdatum noch einmal vollständig mit Tag, Monat und Jahr.';
+
+function isVnrInBirthdayAuthPhase(
+  session: VerificationSessionState | null,
+  input: VerificationVnrBrainInput
+): boolean {
+  if (session?.vnr_birthday_auth_succeeded) return false;
+  return (
+    session?.vnr_awaiting_customer_birthday === true ||
+    session?.vnr_awaiting_check_birthday_result === true ||
+    session?.vnr_customer_birthday_collected === true ||
+    (session?.attempts.birthday_check_attempts ?? 0) > 0 ||
+    (input.birthday_check_attempts ?? 0) > 0
+  );
+}
+
 function runVnrInsuranceLookupFoundStep(
   ctx: VnrInsuranceLookupFoundContext
 ): VerificationMethodBrainResult {
@@ -545,7 +567,10 @@ function runVnrInsuranceLookupFoundStep(
   } = ctx;
 
   if (isVnrBirthdayAuthSucceeded(session, effectiveCheckBirthdayResult)) {
-    if (session) session.vnr_birthday_auth_succeeded = true;
+    if (session) {
+      session.vnr_birthday_auth_succeeded = true;
+      session.vnr_awaiting_customer_birthday = false;
+    }
     return finalize(makeResult('vnr', {
       ok: true,
       next_action: 'TRANSITION_WEITER',
@@ -579,6 +604,34 @@ function runVnrInsuranceLookupFoundStep(
     }));
   }
 
+  if (
+    effectiveCheckBirthdayResult === 'failed' &&
+    isVnrInBirthdayAuthPhase(session, input)
+  ) {
+    if ((input.birthday_check_attempts ?? 0) >= 2 || (input.birthday_request_count ?? 0) >= 2) {
+      if (session) session.vnr_awaiting_customer_birthday = false;
+      return finalize(makeResult('vnr', {
+        ok: false,
+        next_action: 'TRANSITION_NICHT_IDENTIFIZIERT',
+        say: 'Ich konnte Sie leider nicht eindeutig verifizieren.',
+        reason: 'Birthday check failed after the allowed retry limit.',
+        missing_fields: [],
+        safety_flags: ['birthday_check_limit_reached'],
+        transition_to: 'nicht_identifiziert',
+      }));
+    }
+
+    if (session) session.vnr_awaiting_customer_birthday = true;
+    return finalize(makeResult('vnr', {
+      ok: true,
+      next_action: 'ASK_BIRTHDAY',
+      say: VNR_BIRTHDAY_CHECK_FAILED_RETRY_SAY,
+      reason: 'Birthday check failed and a smart retry is required.',
+      missing_fields: ['birthday_customer'],
+      safety_flags: ['birthday_retry'],
+    }));
+  }
+
   if (!vnrAuthBirthday) {
     if ((input.birthday_request_count ?? 0) >= 2) {
       return finalize(makeResult('vnr', {
@@ -592,36 +645,14 @@ function runVnrInsuranceLookupFoundStep(
       }));
     }
 
+    if (session) session.vnr_awaiting_customer_birthday = true;
     return finalize(makeResult('vnr', {
       ok: true,
       next_action: 'ASK_BIRTHDAY',
-      say: 'Bitte nennen Sie mir zur Verifizierung Ihr Geburtsdatum.',
+      say: VNR_BIRTHDAY_FIRST_ASK_SAY,
       reason: 'Customer lookup by insurance number found a customer, so birthday is the next safe verification step.',
       missing_fields: ['birthday_customer'],
       safety_flags: ['vnr_found_requires_birthday_auth'],
-    }));
-  }
-
-  if (effectiveCheckBirthdayResult === 'failed') {
-    if ((input.birthday_check_attempts ?? 0) >= 2 || (input.birthday_request_count ?? 0) >= 2) {
-      return finalize(makeResult('vnr', {
-        ok: false,
-        next_action: 'TRANSITION_NICHT_IDENTIFIZIERT',
-        say: 'Ich konnte Sie leider nicht eindeutig verifizieren.',
-        reason: 'Birthday check failed after the allowed retry limit.',
-        missing_fields: [],
-        safety_flags: ['birthday_check_limit_reached'],
-        transition_to: 'nicht_identifiziert',
-      }));
-    }
-
-    return finalize(makeResult('vnr', {
-      ok: true,
-      next_action: 'ASK_BIRTHDAY',
-      say: 'Bitte nennen Sie mir Ihr Geburtsdatum noch einmal zur Verifizierung.',
-      reason: 'Birthday check failed once and one retry is still allowed.',
-      missing_fields: ['birthday_customer'],
-      safety_flags: ['birthday_retry'],
     }));
   }
 
@@ -647,7 +678,10 @@ function runVnrInsuranceLookupFoundStep(
     function_arguments: checkBirthdayArgs?.function_arguments,
     leaping_function_arguments: checkBirthdayArgs?.leaping_function_arguments,
   });
-  if (session) session.vnr_awaiting_check_birthday_result = true;
+  if (session) {
+    session.vnr_awaiting_check_birthday_result = true;
+    session.vnr_awaiting_customer_birthday = false;
+  }
   return finalize(result);
 }
 

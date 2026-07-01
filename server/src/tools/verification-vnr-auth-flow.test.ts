@@ -9,6 +9,28 @@ import { outputContainsRawCustomerRecord } from './verification-brain-sanitize.j
 
 const SESSION = 'vnr-auth-flow-test';
 
+const VNR_BIRTHDAY_FIRST_ASK_SAY =
+  'Bitte nennen Sie mir zur Verifizierung Ihr Geburtsdatum.';
+
+const VNR_BIRTHDAY_CHECK_FAILED_RETRY_SAY =
+  'Das Geburtsdatum konnte ich leider nicht bestätigen. Bitte nennen Sie mir Ihr Geburtsdatum noch einmal vollständig mit Tag, Monat und Jahr.';
+
+function setupVnrLookupFoundAskBirthday(sessionId: string) {
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    vnr_candidate: 'L039359923',
+    vnr_confirmed: true,
+  });
+  const ask = runVerificationVnrBrain(
+    coerceVerificationVnrBrainInput({
+      session_id: sessionId,
+      get_customer_by_insurance_number_result: 'found',
+    })
+  );
+  assert.equal(ask.next_action, 'ASK_BIRTHDAY');
+  assert.equal(ask.say, VNR_BIRTHDAY_FIRST_ASK_SAY);
+}
+
 test('VNR confirmed then lookup found asks for birthday', () => {
   const sessionId = `${SESSION}-ask-birthday`;
   runVerificationVnrBrain({
@@ -159,7 +181,7 @@ test('VNR full CRM lookup callback sanitizes and asks birthday not VNR', () => {
   const logged = toLoggedVerificationBrainResponse(callback);
 
   assert.equal(callback.next_action, 'ASK_BIRTHDAY');
-  assert.equal(callback.say, 'Bitte nennen Sie mir zur Verifizierung Ihr Geburtsdatum.');
+  assert.equal(callback.say, VNR_BIRTHDAY_FIRST_ASK_SAY);
   assert.notEqual(callback.next_action, 'ASK_VNR');
   assert.equal(leaping.action_type, 'SAY_ONLY');
   assert.equal(leaping.transition_name, null);
@@ -343,4 +365,111 @@ test('VNR failed birthday check does not transition weiter', () => {
   assert.notEqual(failed.next_action, 'TRANSITION_WEITER');
   assert.equal(leaping.transition_name, null);
   assert.equal(failed.next_action, 'ASK_BIRTHDAY');
+  assert.equal(failed.say, VNR_BIRTHDAY_CHECK_FAILED_RETRY_SAY);
+});
+
+test('VNR minimal failed callback after lookup returns smart retry not first-time ask', () => {
+  const sessionId = `${SESSION}-minimal-failed-smart-retry`;
+  setupVnrLookupFoundAskBirthday(sessionId);
+
+  const failed = runVerificationVnrBrain(
+    coerceVerificationVnrBrainInput({
+      session_id: sessionId,
+      check_birthday_result: false,
+    })
+  );
+  const leaping = toLeapingVerificationBrainResponse(failed);
+  const logged = toLoggedVerificationBrainResponse(failed);
+
+  assert.equal(failed.next_action, 'ASK_BIRTHDAY');
+  assert.equal(failed.say, VNR_BIRTHDAY_CHECK_FAILED_RETRY_SAY);
+  assert.notEqual(failed.say, VNR_BIRTHDAY_FIRST_ASK_SAY);
+  assert.ok(failed.safety_flags.includes('birthday_retry'));
+  assert.equal(leaping.action_type, 'SAY_ONLY');
+  assert.equal(leaping.transition_name, null);
+  assert.equal(JSON.stringify(leaping).includes('birthday_system'), false);
+  assert.equal(JSON.stringify(logged).includes('birthday_system'), false);
+  assert.equal(failed.say.includes('1956'), false);
+});
+
+test('VNR minimal failed callback increments birthday_check_attempts', () => {
+  const sessionId = `${SESSION}-minimal-failed-attempts`;
+  setupVnrLookupFoundAskBirthday(sessionId);
+
+  const failed = runVerificationVnrBrain(
+    coerceVerificationVnrBrainInput({
+      session_id: sessionId,
+      check_birthday_result: 'failed',
+    })
+  );
+
+  assert.equal(failed.attempts?.birthday_check_attempts, 1);
+});
+
+test('VNR repeated minimal failed callbacks eventually transition nicht identifiziert', () => {
+  const sessionId = `${SESSION}-minimal-failed-escalation`;
+  setupVnrLookupFoundAskBirthday(sessionId);
+
+  const first = runVerificationVnrBrain(
+    coerceVerificationVnrBrainInput({
+      session_id: sessionId,
+      check_birthday_result: 'failed',
+    })
+  );
+  assert.equal(first.next_action, 'ASK_BIRTHDAY');
+  assert.equal(first.say, VNR_BIRTHDAY_CHECK_FAILED_RETRY_SAY);
+
+  const second = runVerificationVnrBrain(
+    coerceVerificationVnrBrainInput({
+      session_id: sessionId,
+      check_birthday_result: 'failed',
+    })
+  );
+  assert.equal(second.next_action, 'ASK_BIRTHDAY');
+  assert.equal(second.say, VNR_BIRTHDAY_CHECK_FAILED_RETRY_SAY);
+
+  const third = runVerificationVnrBrain(
+    coerceVerificationVnrBrainInput({
+      session_id: sessionId,
+      check_birthday_result: 'failed',
+    })
+  );
+  const leaping = toLeapingVerificationBrainResponse(third);
+
+  assert.equal(third.next_action, 'TRANSITION_NICHT_IDENTIFIZIERT');
+  assert.equal(third.transition_to, 'nicht_identifiziert');
+  assert.equal(leaping.action_type, 'TRANSITION');
+  assert.equal(leaping.transition_name, 'nicht_identifiziert');
+  assert.equal(third.attempts?.birthday_check_attempts, 3);
+});
+
+test('VNR success path still transitions weiter after minimal failed retry flow', () => {
+  const sessionId = `${SESSION}-success-after-failed-retry`;
+  setupVnrLookupFoundAskBirthday(sessionId);
+
+  runVerificationVnrBrain(
+    coerceVerificationVnrBrainInput({
+      session_id: sessionId,
+      check_birthday_result: 'failed',
+    })
+  );
+
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: '16.03.1956',
+    birthday_system_available: true,
+  });
+
+  const done = runVerificationVnrBrain(
+    coerceVerificationVnrBrainInput({
+      session_id: sessionId,
+      check_birthday_result: 'success',
+    })
+  );
+  const leaping = toLeapingVerificationBrainResponse(done);
+
+  assert.equal(done.next_action, 'TRANSITION_WEITER');
+  assert.equal(done.transition_to, 'weiter');
+  assert.equal(leaping.action_type, 'TRANSITION');
+  assert.equal(leaping.transition_name, 'weiter');
 });

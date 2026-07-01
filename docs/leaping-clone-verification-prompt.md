@@ -176,6 +176,19 @@ Immer auch `session_id` und `phone_lookup_found` mitschicken.
 - **Niemals** `check_birthday` vor Kunden-Lookup
 - **Niemals** direkt von Formatprüfung zu Geburtstag springen, es sei denn MCP sagt es
 
+### VNR Geburtstag nach Lookup (Reihenfolge)
+
+Wenn MCP nach erfolgreichem `get_customer_by_insurance_number` nach dem Geburtsdatum fragt (`action_type=SAY_ONLY`, `ASK_BIRTHDAY`):
+
+1. **Kundenantwort zuerst ans Brain** — nächste Kundenantwort **nur** als `latest_customer_input` an `pmb_verification_vnr_brain` senden (nicht direkt `check_birthday` aufrufen).
+2. **Nur bei MCP-Freigabe** — wenn MCP `action_type=CALL_FUNCTION` und `function_name=check_birthday` zurückgibt: native `check_birthday` mit exakt `function_arguments` aufrufen.
+3. **Ergebnis ans Brain** — danach `pmb_verification_vnr_brain` erneut mit `check_birthday_result` (oder `check_birthday_error`) aufrufen, **nicht** als `latest_customer_input`.
+4. **MCP-Antwort ausführen** — bei `check_birthday_result=true`: `TRANSITION weiter`; bei `false`: MCP liefert Wiederholungstext (kein erneutes Erstfragen).
+
+**Falsch:** Kunde nennt Geburtstag → Leaping ruft direkt `check_birthday` auf → Brain bekommt nur `{ session_id, check_birthday_result: false }` ohne gespeicherte Kundenantwort.
+
+**Richtig:** Kunde nennt Geburtstag → Brain mit `latest_customer_input` → MCP gibt `CALL_FUNCTION check_birthday` → `check_birthday` → Brain mit `check_birthday_result`.
+
 ---
 
 ## Telefon-Pfad
