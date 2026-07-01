@@ -19,6 +19,12 @@ import { appConfig } from '../config.js';
 import { createMcpServer, sseTransports } from '../mcp.js';
 import { parseAddressVerificationGuardrail } from '../tools/address-verification-guardrail.js';
 import {
+  coerceDebugEchoSessionInput,
+  coerceDebugEchoSessionOnlyInput,
+  runDebugEchoSession,
+  runDebugEchoSessionOnly,
+} from '../tools/debug-echo-session.js';
+import {
   coerceDeliveryStatusReasonerInput,
   runDeliveryStatusReasoner,
 } from '../tools/delivery-status-reasoner.js';
@@ -31,6 +37,10 @@ import {
   coercePostCallEmailNotifierInput,
   runPostCallEmailNotifier,
 } from '../tools/post-call-email-notifier.js';
+import {
+  coerceVerificationMethodRouterInput,
+  runVerificationMethodRouter,
+} from '../tools/verification-method-router.js';
 import {
   coerceVerificationAddressBrainInput,
   coerceVerificationPhoneBrainInput,
@@ -116,13 +126,68 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: 'pmb_debug_echo_session',
+    description:
+      'Clone-only debug helper: echoes session_id and bound fields from Leaping Function nodes. ' +
+      'Bind session_id = leaping_conversation_id_hex to verify stable IDs.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string', description: 'Stable call session id (leaping_conversation_id_hex).' },
+        latest_customer_input: { type: 'string' },
+        plz: { type: 'string' },
+        hnr: { type: 'string' },
+        bday: { type: 'string' },
+        id_phone: { type: 'string', description: 'Customer id from get_customer_by_phone.' },
+        phone_lookup_found: { type: 'string', description: 'Phone lookup result or explicit flag.' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'pmb_debug_echo_session_only',
+    description:
+      'Clone-only session binding smoke test after get_customer_by_phone. ' +
+      'Verifies session_id binding and optional id_phone without LLM-filled extras.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string', description: 'Stable call session id (leaping_conversation_id_hex).' },
+        id_phone: { type: 'string', description: 'Customer id from get_customer_by_phone.' },
+        phone_lookup_found: { type: 'string', description: 'Phone lookup result or explicit flag.' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'pmb_verification_method_router',
+    description:
+      'Clone-only verification method router. Runs after intent detection and before Kundenidentifikation. ' +
+      'Chooses phone, address, or VNR path and stores it in MCP session.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string', description: 'Stable call session id (leaping_conversation_id_hex).' },
+        latest_customer_input: { type: 'string', description: 'Customer answer when choosing verification method.' },
+        phone_lookup_found: { type: 'string', description: 'Result of get_customer_by_phone.' },
+        id_phone: { type: 'string', description: 'Customer id from get_customer_by_phone.' },
+        id: { type: 'string', description: 'Customer id populated after get_customer_by_phone.' },
+        get_customer_by_phone_result: { type: 'string', description: 'Native get_customer_by_phone result.' },
+        customer_intent: { type: 'string', description: 'Optional intent label from Leaping.' },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'pmb_verification_phone_brain',
     description:
       'Deterministic phone verification controller. Use only after get_customer_by_phone already found a customer.',
     inputSchema: {
       type: 'object',
       properties: {
+        session_id: { type: 'string' },
         phone_lookup_found: { type: 'boolean' },
+        id_phone: { type: 'string', description: 'Customer id from get_customer_by_phone.' },
         latest_customer_input: { type: 'string' },
         birthday_customer: { type: 'string' },
         check_birthday_result: { type: 'string' },
@@ -143,7 +208,9 @@ const MCP_TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
+        session_id: { type: 'string' },
         phone_lookup_found: { type: 'boolean' },
+        id_phone: { type: 'string', description: 'Customer id from get_customer_by_phone.' },
         latest_customer_input: { type: 'string' },
         plz: { type: 'string' },
         house_number: { type: 'string' },
@@ -163,6 +230,7 @@ const MCP_TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
+        session_id: { type: 'string' },
         latest_customer_input: { type: 'string' },
         vnr_raw: { type: 'string' },
         vnr_candidate: { type: 'string' },
@@ -349,6 +417,27 @@ async function runTool(
       };
       const result = parseAddressVerificationGuardrail(input);
       logCall('pmb_address_verification_guardrail', input, result, null, Date.now() - start);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+
+    case 'pmb_debug_echo_session': {
+      const input = coerceDebugEchoSessionInput(args);
+      const result = runDebugEchoSession(input);
+      logCall('pmb_debug_echo_session', input, result, null, Date.now() - start);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+
+    case 'pmb_debug_echo_session_only': {
+      const input = coerceDebugEchoSessionOnlyInput(args);
+      const result = runDebugEchoSessionOnly(input);
+      logCall('pmb_debug_echo_session_only', input, result, null, Date.now() - start);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+
+    case 'pmb_verification_method_router': {
+      const input = coerceVerificationMethodRouterInput(args);
+      const result = runVerificationMethodRouter(input);
+      logCall('pmb_verification_method_router', input, result, null, Date.now() - start);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
 

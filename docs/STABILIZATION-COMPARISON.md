@@ -154,6 +154,8 @@ cd server && npm install && npm test && npm run build
 pm2 restart pflegemittelbox-mcp --update-env
 ```
 
+**Leaping tool discovery:** Leaping uses Streamable HTTP (`POST /mcp/sse` → `tools/list`), which reads from `server/src/routes/mcp-http.ts` (`MCP_TOOLS`), not only `mcp.ts`. After deploy, disconnect and reconnect the MCP server in Leaping so `tools/list` refreshes.
+
 ## First Leaping test after stabilization deploy
 
 Phone-found path: confirm MCP returns **legacy fields**, not only `action_type`:

@@ -7,6 +7,12 @@ import {
 } from '../tools/delivery-status-reasoner.js';
 import { normalizeVnr } from '../tools/normalize-vnr.js';
 import {
+  coerceDebugEchoSessionInput,
+  coerceDebugEchoSessionOnlyInput,
+  runDebugEchoSession,
+  runDebugEchoSessionOnly,
+} from '../tools/debug-echo-session.js';
+import {
   coercePostCallAlertDetectorInput,
   runPostCallAlertDetector,
 } from '../tools/post-call-alert-detector.js';
@@ -14,6 +20,10 @@ import {
   coercePostCallEmailNotifierInput,
   runPostCallEmailNotifier,
 } from '../tools/post-call-email-notifier.js';
+import {
+  coerceVerificationMethodRouterInput,
+  runVerificationMethodRouter,
+} from '../tools/verification-method-router.js';
 import {
   coerceVerificationAddressBrainInput,
   coerceVerificationPhoneBrainInput,
@@ -102,6 +112,61 @@ export const TOOL_DEFS = [
     },
   },
   {
+    name: 'pmb_debug_echo_session',
+    description:
+      'Clone-only debug helper: echoes session_id and bound fields from Leaping Function nodes.',
+    category: 'utility',
+    safe: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string' },
+        latest_customer_input: { type: 'string' },
+        plz: { type: 'string' },
+        hnr: { type: 'string' },
+        bday: { type: 'string' },
+        id_phone: { type: 'string' },
+        phone_lookup_found: { type: 'string' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'pmb_debug_echo_session_only',
+    description: 'Clone-only session binding smoke test after get_customer_by_phone.',
+    category: 'utility',
+    safe: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string' },
+        id_phone: { type: 'string' },
+        phone_lookup_found: { type: 'string' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'pmb_verification_method_router',
+    description:
+      'Clone-only verification method router. Runs after intent and before Kundenidentifikation.',
+    category: 'guardrail',
+    safe: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string' },
+        latest_customer_input: { type: 'string' },
+        phone_lookup_found: { type: 'string' },
+        id_phone: { type: 'string' },
+        id: { type: 'string' },
+        get_customer_by_phone_result: { type: 'string' },
+        customer_intent: { type: 'string' },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'pmb_verification_phone_brain',
     description: 'Deterministic phone verification controller. Use only after get_customer_by_phone already found a customer.',
     category: 'guardrail',
@@ -111,6 +176,7 @@ export const TOOL_DEFS = [
       properties: {
         session_id: { type: 'string' },
         phone_lookup_found: { type: 'boolean' },
+        id_phone: { type: 'string' },
         latest_customer_input: { type: 'string' },
         birthday_customer: { type: 'string' },
         check_birthday_result: { type: 'string' },
@@ -134,6 +200,7 @@ export const TOOL_DEFS = [
       properties: {
         session_id: { type: 'string' },
         phone_lookup_found: { type: 'boolean' },
+        id_phone: { type: 'string' },
         latest_customer_input: { type: 'string' },
         plz: { type: 'string' },
         house_number: { type: 'string' },
@@ -244,6 +311,12 @@ export async function runDashboardTool(name: string, input: Record<string, unkno
         throw new Error('"attempt" must be a number >= 1');
       }
       output = parseAddressVerificationGuardrail(guardrailInput);
+    } else if (name === 'pmb_debug_echo_session') {
+      output = runDebugEchoSession(coerceDebugEchoSessionInput(input));
+    } else if (name === 'pmb_debug_echo_session_only') {
+      output = runDebugEchoSessionOnly(coerceDebugEchoSessionOnlyInput(input));
+    } else if (name === 'pmb_verification_method_router') {
+      output = runVerificationMethodRouter(coerceVerificationMethodRouterInput(input));
     } else if (name === 'pmb_verification_phone_brain') {
       output = runVerificationPhoneBrain(coerceVerificationPhoneBrainInput(input));
     } else if (name === 'pmb_verification_address_brain') {
