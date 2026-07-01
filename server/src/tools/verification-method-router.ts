@@ -5,6 +5,7 @@ import {
   type VerificationSessionState,
 } from './verification-method-brains.js';
 import { coercePhoneLookupFound } from './lookup-result-sanitize.js';
+import { inferPhoneLookupFoundFromLeapingInput } from './leaping-field-bindings.js';
 
 export type VerificationPath = 'phone' | 'address' | 'vnr';
 
@@ -63,7 +64,7 @@ export function coerceVerificationMethodRouterInput(
   return {
     session_id: optionalString(input.session_id),
     latest_customer_input: optionalString(input.latest_customer_input),
-    phone_lookup_found: coercePhoneLookupFound(input.phone_lookup_found),
+    phone_lookup_found: inferPhoneLookupFoundFromLeapingInput(input),
     customer_intent: optionalString(input.customer_intent),
   };
 }

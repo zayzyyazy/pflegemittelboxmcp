@@ -1,5 +1,10 @@
 import { normalizeVnr as normalizeVnrLoose } from './normalize-vnr.js';
 import { isLookupFound, isLookupNotFound, toSafeLookupSummary, coercePhoneLookupFound, type LookupResultStorage } from './lookup-result-sanitize.js';
+import {
+  hasBirthdaySystemSignal,
+  inferVnrInsuranceLookupResult,
+  leapingVnrLookupFieldsPresent,
+} from './leaping-field-bindings.js';
 import { parseVnrUtterance } from './verification-vnr-parser.js';
 
 export interface VerificationPhoneBrainInput {
@@ -37,6 +42,9 @@ export interface VerificationVnrBrainInput {
   vnr_confirmed?: boolean;
   check_insurance_number_format_result?: 'valid' | 'invalid' | 'error' | 'not_called';
   get_customer_by_insurance_number_result?: unknown;
+  id?: string;
+  customer_id?: string;
+  birthday_system?: string | boolean;
   birthday_customer?: string;
   check_birthday_result?: 'success' | 'failed' | 'error' | 'not_called';
   check_birthday_error?: string;
@@ -116,6 +124,7 @@ interface VerificationSessionState extends VerificationSessionStoredValues {
   birthday_collected_before_vnr_lookup: boolean;
   vnr_customer_birthday_collected: boolean;
   vnr_awaiting_check_birthday_result: boolean;
+  vnr_awaiting_insurance_lookup_result: boolean;
 }
 
 type Confidence = 'high' | 'medium' | 'low';
@@ -269,6 +278,7 @@ function emptySessionState(): VerificationSessionState {
     birthday_collected_before_vnr_lookup: false,
     vnr_customer_birthday_collected: false,
     vnr_awaiting_check_birthday_result: false,
+    vnr_awaiting_insurance_lookup_result: false,
   };
 }
 
@@ -423,7 +433,8 @@ function normalizeLookupResult(value: unknown): 'found' | 'not_found' | 'error' 
 }
 
 function lookupResultReceivedThisTurn(rawInput: VerificationVnrBrainInput): boolean {
-  return rawInput.get_customer_by_insurance_number_result !== undefined;
+  if (rawInput.get_customer_by_insurance_number_result !== undefined) return true;
+  return leapingVnrLookupFieldsPresent(rawInput as Record<string, unknown>);
 }
 
 function getVnrAuthBirthdayCustomer(
@@ -1216,10 +1227,18 @@ export function coerceVerificationVnrBrainInput(input: Record<string, unknown>):
     vnr_confirmed: asBoolean(input.vnr_confirmed),
     check_insurance_number_format_result: normalizeFormatResult(input.check_insurance_number_format_result),
     get_customer_by_insurance_number_result: input.get_customer_by_insurance_number_result,
+    id: asString(input.id) ?? asString(input.customer_id),
+    customer_id: asString(input.customer_id),
+    birthday_system:
+      typeof input.birthday_system === 'boolean'
+        ? input.birthday_system
+        : asString(input.birthday_system),
     birthday_customer: asString(input.birthday_customer),
     check_birthday_result: normalizeCheckBirthdayResult(input.check_birthday_result),
     check_birthday_error: asString(input.check_birthday_error),
-    birthday_system_available: asBoolean(input.birthday_system_available),
+    birthday_system_available:
+      asBoolean(input.birthday_system_available) ??
+      (hasBirthdaySystemSignal(input) ? true : undefined),
     vnr_request_count: asNumber(input.vnr_request_count),
     vnr_lookup_attempts: asNumber(input.vnr_lookup_attempts),
     birthday_request_count: asNumber(input.birthday_request_count),
@@ -1772,10 +1791,34 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
   if (session) {
     session.active_verification_path = 'vnr';
   }
-  const extraSafetyFlags: string[] = [];
-  const latestText = getSpeechInput(rawInput.latest_customer_input, extraSafetyFlags);
 
-  if (isNeukundeLike(rawInput.latest_customer_input)) {
+  const inferredLookup = inferVnrInsuranceLookupResult(rawInput as Record<string, unknown>, {
+    vnr_confirmed: rawInput.vnr_confirmed ?? session?.vnr_confirmed ?? undefined,
+    vnr_awaiting_insurance_lookup_result: session?.vnr_awaiting_insurance_lookup_result,
+    existing_lookup_result: session?.get_customer_by_insurance_number_result,
+  });
+  const leapingInput = rawInput as Record<string, unknown>;
+  const normalizedRawInput: VerificationVnrBrainInput = {
+    ...rawInput,
+    get_customer_by_insurance_number_result:
+      rawInput.get_customer_by_insurance_number_result ?? inferredLookup,
+    birthday_system_available:
+      rawInput.birthday_system_available ??
+      (hasBirthdaySystemSignal(leapingInput) ? true : undefined),
+  };
+  if (
+    !rawInput.latest_customer_input &&
+    leapingVnrLookupFieldsPresent(leapingInput) &&
+    normalizedRawInput.birthday_customer &&
+    hasBirthdaySystemSignal(leapingInput)
+  ) {
+    normalizedRawInput.birthday_customer = undefined;
+  }
+
+  const extraSafetyFlags: string[] = [];
+  const latestText = getSpeechInput(normalizedRawInput.latest_customer_input, extraSafetyFlags);
+
+  if (isNeukundeLike(normalizedRawInput.latest_customer_input)) {
     return finalizeGenericBrainResult(
       makeResult('vnr', {
         ok: false,
@@ -1786,20 +1829,20 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
         safety_flags: [...extraSafetyFlags, 'customer_is_neukunde'],
         transition_to: 'nicht_identifiziert',
       }),
-      rawInput.session_id,
+      normalizedRawInput.session_id,
       session
     );
   }
 
   const mergedLookupResult = mergeNormalizedLookupResult(
-    rawInput.get_customer_by_insurance_number_result,
+    normalizedRawInput.get_customer_by_insurance_number_result,
     session?.get_customer_by_insurance_number_result
   );
   const lookupFound = isLookupFound(mergedLookupResult);
-  const lookupCallbackTurn = lookupResultReceivedThisTurn(rawInput);
+  const lookupCallbackTurn = lookupResultReceivedThisTurn(normalizedRawInput);
   const storedVnrCandidate = session?.vnr_candidate ?? undefined;
   const hasValidConfirmedVnr =
-    (rawInput.vnr_confirmed === true || session?.vnr_confirmed === true) &&
+    (normalizedRawInput.vnr_confirmed === true || session?.vnr_confirmed === true) &&
     Boolean(storedVnrCandidate && /^[A-Z][0-9]{9}$/.test(storedVnrCandidate));
   const awaitingLetterOnly =
     Boolean(session?.vnr_digits_candidate && /^\d{9}$/.test(session.vnr_digits_candidate)) &&
@@ -1809,7 +1852,7 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
     Boolean(latestText) &&
     (awaitingLetterOnly ||
       !hasValidConfirmedVnr ||
-      !/^[A-Z][0-9]{9}$/.test(normalizeVnr(rawInput.vnr_candidate ?? storedVnrCandidate) ?? ''));
+      !/^[A-Z][0-9]{9}$/.test(normalizeVnr(normalizedRawInput.vnr_candidate ?? storedVnrCandidate) ?? ''));
   const parsedVnr = shouldParseVnrFromSpeech
     ? parseVnrUtterance(latestText, session?.vnr_digits_candidate ?? null)
     : {
@@ -1819,7 +1862,7 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
         awaiting_letter: false,
         valid_shape: false,
       };
-  const explicitCandidate = normalizeVnr(rawInput.vnr_candidate ?? rawInput.vnr_raw);
+  const explicitCandidate = normalizeVnr(normalizedRawInput.vnr_candidate ?? normalizedRawInput.vnr_raw);
   const resolvedCandidate = normalizeVnr(
     explicitCandidate ??
       (shouldParseVnrFromSpeech ? parsedVnr.candidate : null) ??
@@ -1827,43 +1870,44 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
       undefined
   );
   const birthdayMerge = mergeBirthday(
-    rawInput.birthday_customer ?? session?.birthday_customer ?? undefined,
+    normalizedRawInput.birthday_customer ?? session?.birthday_customer ?? undefined,
     latestText,
     session?.pending_birthday_day,
     session?.pending_birthday_month
   );
   const input: VerificationVnrBrainInput = {
-    ...rawInput,
-    vnr_raw: normalizeVnr(rawInput.vnr_raw ?? resolvedCandidate),
+    ...normalizedRawInput,
+    vnr_raw: normalizeVnr(normalizedRawInput.vnr_raw ?? resolvedCandidate),
     vnr_candidate: resolvedCandidate,
     vnr_confirmed:
-      rawInput.vnr_confirmed === true ||
+      normalizedRawInput.vnr_confirmed === true ||
       (resolvedCandidate !== undefined && isYesLike(latestText))
         ? true
-        : rawInput.vnr_confirmed ?? session?.vnr_confirmed ?? undefined,
+        : normalizedRawInput.vnr_confirmed ?? session?.vnr_confirmed ?? undefined,
     birthday_customer: birthdayMerge.value,
     check_insurance_number_format_result: mergeNormalizedFormatResult(
-      rawInput.check_insurance_number_format_result,
+      normalizedRawInput.check_insurance_number_format_result,
       session?.check_insurance_number_format_result
     ),
     get_customer_by_insurance_number_result: mergeNormalizedLookupResult(
-      rawInput.get_customer_by_insurance_number_result,
+      normalizedRawInput.get_customer_by_insurance_number_result,
       session?.get_customer_by_insurance_number_result
     ),
     check_birthday_result: mergeNormalizedCheckBirthdayResult(
-      rawInput.check_birthday_result,
+      normalizedRawInput.check_birthday_result,
       session?.check_birthday_result
     ),
-    check_birthday_error: rawInput.check_birthday_error ?? session?.check_birthday_error ?? undefined,
-    vnr_request_count: rawInput.vnr_request_count ?? session?.attempts.vnr_request_attempts ?? 0,
-    vnr_lookup_attempts: rawInput.vnr_lookup_attempts ?? session?.attempts.vnr_lookup_attempts ?? 0,
-    birthday_request_count: rawInput.birthday_request_count ?? session?.attempts.birthday_collection_attempts ?? 0,
-    birthday_check_attempts: rawInput.birthday_check_attempts ?? session?.attempts.birthday_check_attempts ?? 0,
+    check_birthday_error: normalizedRawInput.check_birthday_error ?? session?.check_birthday_error ?? undefined,
+    birthday_system_available: normalizedRawInput.birthday_system_available,
+    vnr_request_count: normalizedRawInput.vnr_request_count ?? session?.attempts.vnr_request_attempts ?? 0,
+    vnr_lookup_attempts: normalizedRawInput.vnr_lookup_attempts ?? session?.attempts.vnr_lookup_attempts ?? 0,
+    birthday_request_count: normalizedRawInput.birthday_request_count ?? session?.attempts.birthday_collection_attempts ?? 0,
+    birthday_check_attempts: normalizedRawInput.birthday_check_attempts ?? session?.attempts.birthday_check_attempts ?? 0,
   };
   if (session?.birthday_customer && !isLookupFound(session.get_customer_by_insurance_number_result)) {
     session.birthday_collected_before_vnr_lookup = true;
   }
-  const vnrAuthBirthday = getVnrAuthBirthdayCustomer(session, rawInput, birthdayMerge, lookupFound);
+  const vnrAuthBirthday = getVnrAuthBirthdayCustomer(session, normalizedRawInput, birthdayMerge, lookupFound);
   let effectiveCheckBirthdayResult = input.check_birthday_result;
   if (lookupCallbackTurn && lookupFound) {
     effectiveCheckBirthdayResult = 'not_called';
@@ -1879,7 +1923,7 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
   const finalize = (result: VerificationMethodBrainResult) =>
     finalizeGenericBrainResult(
       { ...result, safety_flags: [...extraSafetyFlags, ...result.safety_flags] },
-      rawInput.session_id,
+      normalizedRawInput.session_id,
       session
     );
 
@@ -1900,7 +1944,7 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
       if (!lookupAlreadyFound && !lookupCallbackTurn) {
         session.birthday_collected_before_vnr_lookup = true;
         session.birthday_customer = birthdayMerge.value;
-      } else if (rawInput.latest_customer_input && lookupFound) {
+      } else if (normalizedRawInput.latest_customer_input && lookupFound) {
         session.vnr_customer_birthday_collected = true;
         session.birthday_customer = birthdayMerge.value;
       } else if (!lookupCallbackTurn) {
@@ -1914,18 +1958,19 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
       session.pending_birthday_day = birthdayMerge.parse.day ?? null;
       session.pending_birthday_month = birthdayMerge.parse.month ?? null;
     }
-    if (rawInput.check_insurance_number_format_result !== undefined) {
+    if (normalizedRawInput.check_insurance_number_format_result !== undefined) {
       session.check_insurance_number_format_result = input.check_insurance_number_format_result ?? 'not_called';
     }
-    if (rawInput.get_customer_by_insurance_number_result !== undefined) {
+    if (normalizedRawInput.get_customer_by_insurance_number_result !== undefined) {
       session.get_customer_by_insurance_number_result = storeLookupResult(
-        rawInput.get_customer_by_insurance_number_result
+        normalizedRawInput.get_customer_by_insurance_number_result
       );
+      session.vnr_awaiting_insurance_lookup_result = false;
       if (input.get_customer_by_insurance_number_result !== 'not_called') {
         session.attempts.vnr_lookup_attempts += 1;
       }
     }
-    if (rawInput.check_birthday_result !== undefined) {
+    if (normalizedRawInput.check_birthday_result !== undefined) {
       session.check_birthday_result = effectiveCheckBirthdayResult ?? 'not_called';
       if (effectiveCheckBirthdayResult !== 'not_called') {
         session.attempts.birthday_check_attempts += 1;
@@ -1934,17 +1979,17 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
         }
       }
     }
-    if (rawInput.check_birthday_error) session.check_birthday_error = rawInput.check_birthday_error;
-    if (rawInput.latest_customer_input && !input.vnr_candidate && !parsedVnr.awaiting_letter) {
+    if (normalizedRawInput.check_birthday_error) session.check_birthday_error = normalizedRawInput.check_birthday_error;
+    if (normalizedRawInput.latest_customer_input && !input.vnr_candidate && !parsedVnr.awaiting_letter) {
       session.attempts.vnr_request_attempts += 1;
     }
-    if (rawInput.latest_customer_input && isLookupFound(input.get_customer_by_insurance_number_result) && !vnrAuthBirthday) {
+    if (normalizedRawInput.latest_customer_input && isLookupFound(input.get_customer_by_insurance_number_result) && !vnrAuthBirthday) {
       session.attempts.birthday_collection_attempts += 1;
     }
   }
 
   if (
-    rawInput.latest_customer_input &&
+    normalizedRawInput.latest_customer_input &&
     vnrAuthBirthday &&
     effectiveCheckBirthdayResult === 'failed' &&
     (input.birthday_check_attempts ?? 0) < 2
@@ -1956,7 +2001,7 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
 
   const transfer = maybeTransferHuman('vnr', input.customer_requested_human, input.office_hours);
   if (transfer) {
-    saveSessionState(rawInput.session_id, session ?? emptySessionState());
+    saveSessionState(normalizedRawInput.session_id, session ?? emptySessionState());
     return finalize(transfer);
   }
 
@@ -2044,6 +2089,7 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
       function_arguments: insuranceNumberArgs?.function_arguments,
       leaping_function_arguments: insuranceNumberArgs?.leaping_function_arguments,
     });
+    if (session) session.vnr_awaiting_insurance_lookup_result = true;
     return finalize(result);
   }
 

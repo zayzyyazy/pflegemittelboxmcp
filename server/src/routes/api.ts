@@ -28,7 +28,7 @@ import {
   coerceVerificationMethodRouterInput,
   runVerificationMethodRouter,
 } from '../tools/verification-method-router.js';
-import { LEAPING_VERIFICATION_METHOD_ROUTER_SCHEMA } from '../tools/verification-leaping-schemas.js';
+import { LEAPING_VERIFICATION_METHOD_ROUTER_SCHEMA, LEAPING_VERIFICATION_VNR_BRAIN_SCHEMA } from '../tools/verification-leaping-schemas.js';
 import {
   coerceVerificationAddressBrainInput,
   coerceVerificationPhoneBrainInput,
@@ -232,29 +232,7 @@ const TOOL_DEFS = [
       'Deterministic VNR verification controller that blocks birthday check before customer lookup.',
     category: 'guardrail',
     safe: true,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        session_id: { type: 'string' },
-        latest_customer_input: { type: 'string' },
-        vnr_raw: { type: 'string' },
-        vnr_candidate: { type: 'string' },
-        vnr_confirmed: { type: 'boolean' },
-        check_insurance_number_format_result: { type: 'string' },
-        get_customer_by_insurance_number_result: { type: 'string' },
-        birthday_customer: { type: 'string' },
-        check_birthday_result: { type: 'string' },
-        check_birthday_error: { type: 'string' },
-        birthday_system_available: { type: 'boolean' },
-        vnr_request_count: { type: 'number' },
-        vnr_lookup_attempts: { type: 'number' },
-        birthday_request_count: { type: 'number' },
-        birthday_check_attempts: { type: 'number' },
-        customer_requested_human: { type: 'boolean' },
-        office_hours: { type: 'boolean' },
-      },
-      required: [],
-    },
+    inputSchema: LEAPING_VERIFICATION_VNR_BRAIN_SCHEMA,
   },
   {
     name: 'pmb_verification_brain',

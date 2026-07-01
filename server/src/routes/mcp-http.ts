@@ -43,6 +43,7 @@ import {
 } from '../tools/verification-method-router.js';
 import {
   LEAPING_VERIFICATION_BRAIN_SCHEMA,
+  LEAPING_VERIFICATION_VNR_BRAIN_SCHEMA,
   LEAPING_VERIFICATION_METHOD_ROUTER_SCHEMA,
 } from '../tools/verification-leaping-schemas.js';
 import {
@@ -187,7 +188,7 @@ const MCP_TOOLS = [
     name: 'pmb_verification_vnr_brain',
     description:
       'Deterministic VNR verification controller that blocks birthday check before customer lookup.',
-    inputSchema: LEAPING_VERIFICATION_BRAIN_SCHEMA,
+    inputSchema: LEAPING_VERIFICATION_VNR_BRAIN_SCHEMA,
   },
   {
     name: 'pmb_verification_brain',

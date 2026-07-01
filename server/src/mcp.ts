@@ -33,6 +33,7 @@ import {
 import {
   leapingVerificationBrainZod,
   leapingVerificationMethodRouterZod,
+  leapingVerificationVnrBrainZod,
 } from './tools/verification-leaping-schemas.js';
 import {
   coerceVerificationAddressBrainInput,
@@ -249,7 +250,7 @@ export function createMcpServer(): McpServer {
   server.tool(
     'pmb_verification_vnr_brain',
     'Deterministic VNR verification step controller that enforces the safe order: confirm VNR, format check, customer lookup, then birthday check.',
-    leapingVerificationBrainZod,
+    leapingVerificationVnrBrainZod,
     async (input) => {
       const start = Date.now();
       const coerced = coerceVerificationVnrBrainInput(input);
