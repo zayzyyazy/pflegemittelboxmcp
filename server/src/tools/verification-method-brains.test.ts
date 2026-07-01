@@ -99,7 +99,7 @@ test('address path calls get_customer_by_plz_geb when complete', () => {
   });
 
   assert.equal(result.next_action, 'CALL_GET_CUSTOMER_BY_PLZ_GEB');
-  assert.equal(result.function_to_call, 'pmb_safe_get_customer_by_plz_geb');
+  assert.equal(result.function_to_call, 'get_customer_by_plz_geb');
 });
 
 test('address path parses latest utterance and normalizes house number across session turns', () => {
@@ -124,7 +124,7 @@ test('address path parses latest utterance and normalizes house number across se
     latest_customer_input: 'geboren am 16.03.1956',
   });
   assert.equal(third.next_action, 'CALL_GET_CUSTOMER_BY_PLZ_GEB');
-  assert.equal(third.function_to_call, 'pmb_safe_get_customer_by_plz_geb');
+  assert.equal(third.function_to_call, 'get_customer_by_plz_geb');
 });
 
 test('address path transitions weiter after found', () => {
@@ -199,7 +199,7 @@ test('address path stores PLZ, house number, and birthday across session calls',
     latest_customer_input: '16.03.1956',
   });
   assert.equal(third.next_action, 'CALL_GET_CUSTOMER_BY_PLZ_GEB');
-  assert.equal(third.function_to_call, 'pmb_safe_get_customer_by_plz_geb');
+  assert.equal(third.function_to_call, 'get_customer_by_plz_geb');
   assert.deepEqual(third.function_arguments, {
     plz: '41372',
     hnr: '100',
@@ -234,7 +234,7 @@ test('address lookup not_found is stored and yes confirmation allows retry looku
     latest_customer_input: 'ja stimmt',
   });
   assert.equal(second.next_action, 'CALL_GET_CUSTOMER_BY_PLZ_GEB');
-  assert.equal(second.function_to_call, 'pmb_safe_get_customer_by_plz_geb');
+  assert.equal(second.function_to_call, 'get_customer_by_plz_geb');
 });
 
 test('second address not_found falls back to VNR', () => {
@@ -383,8 +383,8 @@ test('address path exposes action_type aliases without removing legacy fields', 
 
   assert.equal(result.action_type, 'CALL_FUNCTION');
   assert.equal(result.active_brain, 'address');
-  assert.equal(result.function_name, 'pmb_safe_get_customer_by_plz_geb');
-  assert.equal(result.function_to_call, 'pmb_safe_get_customer_by_plz_geb');
+  assert.equal(result.function_name, 'get_customer_by_plz_geb');
+  assert.equal(result.function_to_call, 'get_customer_by_plz_geb');
   assert.equal(result.requires_followup_mcp_call, true);
 });
 
@@ -442,7 +442,7 @@ test('VNR path calls customer lookup after confirmation (internal format validat
   });
 
   assert.equal(result.next_action, 'CALL_GET_CUSTOMER_BY_INSURANCE_NUMBER');
-  assert.equal(result.function_to_call, 'pmb_safe_get_customer_by_insurance_number');
+  assert.equal(result.function_to_call, 'get_customer_by_insurance_number');
   assert.ok(result.safety_flags.includes('internal_vnr_format_valid'));
 });
 
@@ -454,7 +454,7 @@ test('VNR path calls customer lookup after valid format', () => {
   });
 
   assert.equal(result.next_action, 'CALL_GET_CUSTOMER_BY_INSURANCE_NUMBER');
-  assert.equal(result.function_to_call, 'pmb_safe_get_customer_by_insurance_number');
+  assert.equal(result.function_to_call, 'get_customer_by_insurance_number');
 });
 
 test('VNR path blocks birthday check before customer lookup', () => {

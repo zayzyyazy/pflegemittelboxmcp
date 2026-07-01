@@ -1,8 +1,3 @@
-import {
-  PMB_SAFE_GET_CUSTOMER_BY_INSURANCE_NUMBER,
-  PMB_SAFE_GET_CUSTOMER_BY_PLZ_GEB,
-} from './safe-customer-lookup.js';
-
 export interface VerificationBrainInput {
   phone_lookup_found?: boolean;
   identified?: boolean;
@@ -108,9 +103,9 @@ function makeResult(
         ? 'nicht_identifiziert'
         : null;
   const functionMap: Partial<Record<VerificationBrainResult['next_action'], string>> = {
-    CALL_GET_CUSTOMER_BY_PLZ_GEB: PMB_SAFE_GET_CUSTOMER_BY_PLZ_GEB,
+    CALL_GET_CUSTOMER_BY_PLZ_GEB: 'get_customer_by_plz_geb',
     CALL_CHECK_INSURANCE_NUMBER_FORMAT: 'check_insurance_number_format',
-    CALL_GET_CUSTOMER_BY_INSURANCE_NUMBER: PMB_SAFE_GET_CUSTOMER_BY_INSURANCE_NUMBER,
+    CALL_GET_CUSTOMER_BY_INSURANCE_NUMBER: 'get_customer_by_insurance_number',
     CALL_CHECK_BIRTHDAY: 'check_birthday',
   };
 

@@ -153,7 +153,7 @@ function runScenario(scenario: Scenario): ScenarioReport {
     if (customFailure) failures.push(customFailure);
   }
 
-  if (r.action_type === 'CALL_FUNCTION' && !r.function_arguments && r.function_to_call === 'pmb_safe_get_customer_by_plz_geb') {
+  if (r.action_type === 'CALL_FUNCTION' && !r.function_arguments && r.function_to_call === 'get_customer_by_plz_geb') {
     suspicious.push('CALL_FUNCTION without function_arguments for address lookup');
   }
   if (r.action_type === 'CALL_FUNCTION' && r.function_to_call && r.function_name !== r.function_to_call) {
@@ -275,7 +275,7 @@ const SCENARIOS: Scenario[] = [
     ],
     expect: {
       action_type: 'CALL_FUNCTION',
-      function_name: 'pmb_safe_get_customer_by_plz_geb',
+      function_name: 'get_customer_by_plz_geb',
       stored_birthday: '1956-03-16',
       function_arguments: { plz: '41372', hnr: '100', bday: '1956-03-16' },
     },
@@ -291,7 +291,7 @@ const SCENARIOS: Scenario[] = [
     ],
     expect: {
       action_type: 'CALL_FUNCTION',
-      function_name: 'pmb_safe_get_customer_by_plz_geb',
+      function_name: 'get_customer_by_plz_geb',
       function_arguments: { plz: '41372', hnr: '100', bday: '1956-03-16' },
     },
   },
@@ -341,7 +341,7 @@ const SCENARIOS: Scenario[] = [
     steps: [{ input: { phone_lookup_found: false, plz: '41372', house_number: '100', birthday_customer: '1956-03-16' } }],
     expect: {
       action_type: 'CALL_FUNCTION',
-      function_name: 'pmb_safe_get_customer_by_plz_geb',
+      function_name: 'get_customer_by_plz_geb',
       function_arguments: { plz: '41372', hnr: '100', bday: '1956-03-16' },
     },
   },
@@ -418,7 +418,7 @@ const SCENARIOS: Scenario[] = [
     ],
     expect: {
       action_type: 'CALL_FUNCTION',
-      function_name: 'pmb_safe_get_customer_by_plz_geb',
+      function_name: 'get_customer_by_plz_geb',
       function_arguments: { plz: '41372', hnr: '100', bday: '1956-03-16' },
     },
   },
@@ -431,7 +431,7 @@ const SCENARIOS: Scenario[] = [
       { input: { plz: '41372', house_number: '100', birthday_customer: '1956-03-16', get_customer_by_plz_geb_result: 'not_found' } },
       { input: { latest_customer_input: 'ja', get_customer_by_plz_geb_result: { error: 'Kein Kunde gefunden' }, address_lookup_attempts: 2 } },
     ],
-    expect: { next_action: 'FALLBACK_TO_VNR', say_includes: 'Versicherungsnummer', never_function: 'pmb_safe_get_customer_by_plz_geb' },
+    expect: { next_action: 'FALLBACK_TO_VNR', say_includes: 'Versicherungsnummer', never_function: 'get_customer_by_plz_geb' },
   },
   {
     id: 22,
@@ -550,7 +550,7 @@ const SCENARIOS: Scenario[] = [
       { input: { latest_customer_input: 'L wie Ludwig null drei neun drei fünf neun neun zwei drei' } },
       { input: { latest_customer_input: 'ja' } },
     ],
-    expect: { action_type: 'CALL_FUNCTION', function_name: 'pmb_safe_get_customer_by_insurance_number' },
+    expect: { action_type: 'CALL_FUNCTION', function_name: 'get_customer_by_insurance_number' },
   },
   {
     id: 35,
@@ -590,7 +590,7 @@ const SCENARIOS: Scenario[] = [
     brain: 'vnr',
     session_id: 'vnr-038',
     steps: [{ input: { vnr_candidate: 'L039359923', vnr_confirmed: true } }],
-    expect: { action_type: 'CALL_FUNCTION', function_name: 'pmb_safe_get_customer_by_insurance_number' },
+    expect: { action_type: 'CALL_FUNCTION', function_name: 'get_customer_by_insurance_number' },
   },
   {
     id: 39,
@@ -598,7 +598,7 @@ const SCENARIOS: Scenario[] = [
     brain: 'vnr',
     session_id: 'vnr-039',
     steps: [{ input: { vnr_candidate: 'L039359923', vnr_confirmed: true } }],
-    expect: { action_type: 'CALL_FUNCTION', function_name: 'pmb_safe_get_customer_by_insurance_number' },
+    expect: { action_type: 'CALL_FUNCTION', function_name: 'get_customer_by_insurance_number' },
   },
   {
     id: 40,
@@ -733,7 +733,7 @@ const SCENARIOS: Scenario[] = [
     ],
     expect: {
       action_type: 'CALL_FUNCTION',
-      function_name: 'pmb_safe_get_customer_by_plz_geb',
+      function_name: 'get_customer_by_plz_geb',
       function_arguments: { plz: '41372', hnr: '100', bday: '1956-03-16' },
       session_mode: 'session',
     },

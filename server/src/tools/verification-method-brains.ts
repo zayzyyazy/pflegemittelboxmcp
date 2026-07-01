@@ -6,10 +6,6 @@ import {
   leapingVnrLookupFieldsPresent,
 } from './leaping-field-bindings.js';
 import { parseVnrUtterance } from './verification-vnr-parser.js';
-import {
-  PMB_SAFE_GET_CUSTOMER_BY_INSURANCE_NUMBER,
-  PMB_SAFE_GET_CUSTOMER_BY_PLZ_GEB,
-} from './safe-customer-lookup.js';
 
 export interface VerificationPhoneBrainInput {
   session_id?: string;
@@ -129,6 +125,7 @@ interface VerificationSessionState extends VerificationSessionStoredValues {
   vnr_customer_birthday_collected: boolean;
   vnr_awaiting_check_birthday_result: boolean;
   vnr_awaiting_insurance_lookup_result: boolean;
+  vnr_birthday_auth_succeeded: boolean;
 }
 
 type Confidence = 'high' | 'medium' | 'low';
@@ -283,6 +280,7 @@ function emptySessionState(): VerificationSessionState {
     vnr_customer_birthday_collected: false,
     vnr_awaiting_check_birthday_result: false,
     vnr_awaiting_insurance_lookup_result: false,
+    vnr_birthday_auth_succeeded: false,
   };
 }
 
@@ -501,6 +499,37 @@ interface VnrInsuranceLookupFoundContext {
   finalize: (result: VerificationMethodBrainResult) => VerificationMethodBrainResult;
 }
 
+function shouldIgnorePrematureVnrCheckBirthdaySuccess(
+  session: VerificationSessionState | null,
+  options: {
+    lookupCallbackTurn: boolean;
+    lookupFound: boolean;
+    checkBirthdayResultThisTurn: boolean;
+    effectiveResult: 'success' | 'failed' | 'error' | 'not_called';
+  }
+): boolean {
+  if (options.effectiveResult !== 'success') return false;
+  if (options.checkBirthdayResultThisTurn) return false;
+  if (session?.vnr_birthday_auth_succeeded || session?.check_birthday_result === 'success') {
+    return false;
+  }
+  if (session?.vnr_awaiting_check_birthday_result) return false;
+  if ((session?.attempts.birthday_check_attempts ?? 0) > 0) return false;
+  if (options.lookupCallbackTurn && options.lookupFound) return true;
+  return true;
+}
+
+function isVnrBirthdayAuthSucceeded(
+  session: VerificationSessionState | null,
+  effectiveCheckBirthdayResult: 'success' | 'failed' | 'error' | 'not_called'
+): boolean {
+  return (
+    effectiveCheckBirthdayResult === 'success' ||
+    session?.check_birthday_result === 'success' ||
+    session?.vnr_birthday_auth_succeeded === true
+  );
+}
+
 function runVnrInsuranceLookupFoundStep(
   ctx: VnrInsuranceLookupFoundContext
 ): VerificationMethodBrainResult {
@@ -515,7 +544,8 @@ function runVnrInsuranceLookupFoundStep(
     finalize,
   } = ctx;
 
-  if (effectiveCheckBirthdayResult === 'success' && vnrAuthBirthday) {
+  if (isVnrBirthdayAuthSucceeded(session, effectiveCheckBirthdayResult)) {
+    if (session) session.vnr_birthday_auth_succeeded = true;
     return finalize(makeResult('vnr', {
       ok: true,
       next_action: 'TRANSITION_WEITER',
@@ -1882,7 +1912,7 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
           reason: 'Customer confirmed the previously understood address values, so a retry lookup is allowed.',
           missing_fields: [],
           safety_flags: ['address_retry', 'never_call_check_birthday_in_address_path'],
-          function_to_call: PMB_SAFE_GET_CUSTOMER_BY_PLZ_GEB,
+          function_to_call: 'get_customer_by_plz_geb',
           function_arguments: plzGebArgs?.function_arguments,
           leaping_function_arguments: plzGebArgs?.leaping_function_arguments,
           awaiting_field: 'confirm_address',
@@ -1943,7 +1973,7 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
       reason: 'PLZ, house number, and birthday are complete.',
       missing_fields: [],
       safety_flags: ['never_call_check_birthday_in_address_path'],
-      function_to_call: PMB_SAFE_GET_CUSTOMER_BY_PLZ_GEB,
+      function_to_call: 'get_customer_by_plz_geb',
       function_arguments: plzGebArgs?.function_arguments,
       leaping_function_arguments: plzGebArgs?.leaping_function_arguments,
       awaiting_field: null,
@@ -2074,12 +2104,17 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
     session.birthday_collected_before_vnr_lookup = true;
   }
   const vnrAuthBirthday = getVnrAuthBirthdayCustomer(session, normalizedRawInput, birthdayMerge, lookupFound);
+  const checkBirthdayResultThisTurn = normalizedRawInput.check_birthday_result !== undefined;
   let effectiveCheckBirthdayResult = input.check_birthday_result;
   if (lookupCallbackTurn && lookupFound) {
     effectiveCheckBirthdayResult = 'not_called';
   } else if (
-    effectiveCheckBirthdayResult === 'success' &&
-    !session?.vnr_awaiting_check_birthday_result
+    shouldIgnorePrematureVnrCheckBirthdaySuccess(session, {
+      lookupCallbackTurn,
+      lookupFound,
+      checkBirthdayResultThisTurn,
+      effectiveResult: effectiveCheckBirthdayResult ?? 'not_called',
+    })
   ) {
     effectiveCheckBirthdayResult = 'not_called';
   }
@@ -2142,6 +2177,9 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
         session.attempts.birthday_check_attempts += 1;
         if (effectiveCheckBirthdayResult === 'success' || effectiveCheckBirthdayResult === 'failed') {
           session.vnr_awaiting_check_birthday_result = false;
+          if (effectiveCheckBirthdayResult === 'success') {
+            session.vnr_birthday_auth_succeeded = true;
+          }
         }
       }
     }
@@ -2274,7 +2312,7 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
         'Confirmed VNR passed internal format validation. Customer lookup is the next safe step before birthday authentication.',
       missing_fields: [],
       safety_flags: ['internal_vnr_format_valid', 'blocked_check_birthday_before_customer_lookup'],
-      function_to_call: PMB_SAFE_GET_CUSTOMER_BY_INSURANCE_NUMBER,
+      function_to_call: 'get_customer_by_insurance_number',
       function_arguments: insuranceNumberArgs?.function_arguments,
       leaping_function_arguments: insuranceNumberArgs?.leaping_function_arguments,
     });

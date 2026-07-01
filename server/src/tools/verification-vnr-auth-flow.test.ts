@@ -233,3 +233,114 @@ test('VNR full Leaping callback sequence: lookup CRM object then birthday auth',
   });
   assert.equal(afterCheck.next_action, 'TRANSITION_WEITER');
 });
+
+test('VNR lookup found calls native get_customer_by_insurance_number', () => {
+  const sessionId = `${SESSION}-native-lookup`;
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    vnr_candidate: 'L039359923',
+    vnr_confirmed: true,
+  });
+
+  const lookup = runVerificationVnrBrain({
+    session_id: sessionId,
+    vnr_candidate: 'L039359923',
+    vnr_confirmed: true,
+  });
+  const leaping = toLeapingVerificationBrainResponse(lookup);
+
+  assert.equal(lookup.next_action, 'CALL_GET_CUSTOMER_BY_INSURANCE_NUMBER');
+  assert.equal(lookup.function_to_call, 'get_customer_by_insurance_number');
+  assert.equal(leaping.function_name, 'get_customer_by_insurance_number');
+});
+
+test('VNR minimal callback session_id plus check_birthday_result true transitions weiter', () => {
+  const sessionId = `${SESSION}-minimal-true-callback`;
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    vnr_candidate: 'L039359923',
+    vnr_confirmed: true,
+  });
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    get_customer_by_insurance_number_result: 'found',
+  });
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: '16.03.1956',
+    birthday_system_available: true,
+  });
+
+  const done = runVerificationVnrBrain(
+    coerceVerificationVnrBrainInput({
+      session_id: sessionId,
+      check_birthday_result: true,
+    })
+  );
+  const leaping = toLeapingVerificationBrainResponse(done);
+
+  assert.equal(done.next_action, 'TRANSITION_WEITER');
+  assert.equal(leaping.action_type, 'TRANSITION');
+  assert.equal(leaping.transition_name, 'weiter');
+  assert.equal(leaping.requires_followup_mcp_call, false);
+});
+
+test('VNR after birthday auth success does not ask birthday or call check_birthday again', () => {
+  const sessionId = `${SESSION}-no-repeat-birthday`;
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    vnr_candidate: 'L039359923',
+    vnr_confirmed: true,
+  });
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    get_customer_by_insurance_number_result: 'found',
+  });
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: '16.03.1956',
+    birthday_system_available: true,
+  });
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    check_birthday_result: 'success',
+  });
+
+  const again = runVerificationVnrBrain({ session_id: sessionId });
+  const leaping = toLeapingVerificationBrainResponse(again);
+
+  assert.equal(again.next_action, 'TRANSITION_WEITER');
+  assert.equal(leaping.transition_name, 'weiter');
+  assert.notEqual(again.next_action, 'ASK_BIRTHDAY');
+  assert.notEqual(again.function_to_call, 'check_birthday');
+});
+
+test('VNR failed birthday check does not transition weiter', () => {
+  const sessionId = `${SESSION}-birthday-failed`;
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    vnr_candidate: 'L039359923',
+    vnr_confirmed: true,
+  });
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    get_customer_by_insurance_number_result: 'found',
+  });
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: '16.03.1956',
+    birthday_system_available: true,
+  });
+
+  const failed = runVerificationVnrBrain(
+    coerceVerificationVnrBrainInput({
+      session_id: sessionId,
+      check_birthday_result: 'failed',
+    })
+  );
+  const leaping = toLeapingVerificationBrainResponse(failed);
+
+  assert.notEqual(failed.next_action, 'TRANSITION_WEITER');
+  assert.equal(leaping.transition_name, null);
+  assert.equal(failed.next_action, 'ASK_BIRTHDAY');
+});

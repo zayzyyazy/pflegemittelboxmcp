@@ -22,7 +22,7 @@ test('1. controller includes normalized function_arguments for address lookup', 
   const { controller } = splitVerificationBrainResponse(result);
 
   assert.equal(controller.action_type, 'CALL_FUNCTION');
-  assert.equal(controller.function_name, 'pmb_safe_get_customer_by_plz_geb');
+  assert.equal(controller.function_name, 'get_customer_by_plz_geb');
   assert.deepEqual(controller.function_arguments, { plz: '41372', hnr: '100', bday: '1956-03-16' });
   assert.equal(controller.active_brain, 'address');
 });
@@ -51,7 +51,7 @@ test('3. controller includes VNR function_arguments for customer lookup', () => 
   const { controller } = splitVerificationBrainResponse(result);
 
   assert.equal(controller.action_type, 'CALL_FUNCTION');
-  assert.equal(controller.function_name, 'pmb_safe_get_customer_by_insurance_number');
+  assert.equal(controller.function_name, 'get_customer_by_insurance_number');
   assert.deepEqual(controller.function_arguments, { insurance_number: 'L039359923' });
   assert.equal(controller.active_brain, 'vnr');
 });
