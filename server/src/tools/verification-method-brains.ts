@@ -410,6 +410,13 @@ function normalizeVnr(value: string | undefined): string | undefined {
   return value.replace(/\s+/g, '').toUpperCase() || undefined;
 }
 
+/** Typed compact VNR like E207064360 (1 letter + 9 digits, no spaces). */
+function parseCompactVnr(text: string | undefined): string | undefined {
+  if (!text) return undefined;
+  const compact = text.replace(/\s+/g, '').toUpperCase();
+  return /^[A-Z][0-9]{9}$/.test(compact) ? compact : undefined;
+}
+
 function isYesLike(text: string | undefined): boolean {
   if (!text) return false;
   const normalized = text.toLowerCase().trim();
@@ -1800,7 +1807,16 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
     );
   }
 
-  const latestCandidate = latestText ? normalizeVnrLoose(latestText).candidate : undefined;
+  const latestCandidate = latestText
+    ? parseCompactVnr(latestText) ?? normalizeVnrLoose(latestText).candidate
+    : undefined;
+  const resolvedVnr = normalizeVnr(
+    rawInput.vnr_candidate ??
+      rawInput.vnr_raw ??
+      session?.vnr_candidate ??
+      latestCandidate ??
+      undefined
+  );
   const birthdayMerge = mergeBirthday(
     rawInput.birthday_customer ?? session?.birthday_customer ?? undefined,
     latestText,
@@ -1809,8 +1825,8 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
   );
   const input: VerificationVnrBrainInput = {
     ...rawInput,
-    vnr_raw: normalizeVnr(rawInput.vnr_raw ?? session?.vnr_candidate ?? latestCandidate),
-    vnr_candidate: normalizeVnr(rawInput.vnr_candidate ?? session?.vnr_candidate ?? latestCandidate),
+    vnr_raw: resolvedVnr,
+    vnr_candidate: resolvedVnr,
     vnr_confirmed:
       rawInput.vnr_confirmed === true ||
       ((rawInput.vnr_candidate !== undefined || session?.vnr_candidate !== null) && isYesLike(latestText))

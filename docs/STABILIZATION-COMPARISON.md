@@ -93,6 +93,7 @@ Branch: `cursor/jun30-baseline-stabilization-6983` (PR #2)
 **Keep:**
 
 - Full legacy response to Leaping (no slim-only output)
+- **Leaping-facing trim:** brains return core controller fields only (`next_action`, `allowed_to_call_function`, etc.) — same shape as Jun 30 afternoon test calls; `stored_values` / `attempts` stay in server logs only
 - Three separate brains
 - Native `check_insurance_number_format` in VNR flow
 - Session state via `session_id` = `leaping_conversation_id_hex`

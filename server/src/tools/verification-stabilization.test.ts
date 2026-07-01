@@ -13,6 +13,9 @@ import {
   runVerificationPhoneBrain,
   runVerificationVnrBrain,
 } from './verification-method-brains.js';
+import {
+  toLeapingLegacyCoreResponse,
+} from './verification-brain-response.js';
 
 test('stabilization: phone brain returns legacy instruction shape', () => {
   const result = runVerificationPhoneBrain({ session_id: 'legacy-shape', phone_lookup_found: true });
@@ -103,4 +106,31 @@ test('stabilization: debug echo session_only reports session mode and id_phone',
   assert.equal(result.session_mode, 'session');
   assert.equal(result.inferred_phone_lookup_found, true);
   assert.equal(result.received_fields.id_phone, '107484');
+});
+
+test('stabilization: Leaping response trims session debug blobs', () => {
+  const full = runVerificationPhoneBrain({ session_id: 'trim-test', phone_lookup_found: true });
+  const leaping = toLeapingLegacyCoreResponse(full);
+  assert.equal(leaping.next_action, 'ASK_BIRTHDAY');
+  assert.equal('stored_values' in leaping, false);
+  assert.equal('attempts' in leaping, false);
+  assert.equal('state_summary' in leaping, false);
+  assert.equal('action_type' in leaping, false);
+});
+
+test('stabilization: compact VNR E207064360 from latest_customer_input', () => {
+  const result = runVerificationVnrBrain({
+    session_id: 'vnr-compact',
+    latest_customer_input: 'E207064360',
+  });
+  assert.equal(result.next_action, 'CONFIRM_VNR');
+  assert.match(result.say, /E207064360/);
+});
+
+test('stabilization: vnr_raw alone resolves to candidate', () => {
+  const result = runVerificationVnrBrain({
+    session_id: 'vnr-raw-only',
+    vnr_raw: 'E207064360',
+  });
+  assert.equal(result.next_action, 'CONFIRM_VNR');
 });
