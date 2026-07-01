@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { toSafeLookupSummaryForDisplay } from './lookup-result-sanitize.js';
+import { toSafeLookupSummaryForDisplay, summarizeLookupStatus } from './lookup-result-sanitize.js';
 import { sanitizeVerificationBrainInput } from './verification-brain-sanitize.js';
 import {
   runVerificationAddressBrain,
@@ -64,6 +64,16 @@ test('VNR lookup found CRM object sanitizes to safe summary', () => {
     birthday_present: true,
   });
   assert.deepEqual(toSafeLookupSummaryForDisplay(CRM_CUSTOMER), {
+    found: true,
+    id: '107484',
+    birthday_present: true,
+  });
+});
+
+test('summarizeLookupStatus recognizes alternate CRM id field names', () => {
+  const crm = { customerId: '107484', birthday: '1956-03-16' };
+  assert.equal(summarizeLookupStatus(crm), 'found');
+  assert.deepEqual(toSafeLookupSummaryForDisplay(crm), {
     found: true,
     id: '107484',
     birthday_present: true,

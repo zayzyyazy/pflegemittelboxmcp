@@ -26,6 +26,45 @@ function asString(value: unknown): string | undefined {
   return trimmed || undefined;
 }
 
+export function extractCustomerIdFromRecord(record: Record<string, unknown>): string | undefined {
+  const direct =
+    asString(record.id) ??
+    asString(record.customer_id) ??
+    asString(record.customerId) ??
+    asString(record.Kundennummer) ??
+    asString(record.kundennummer);
+  if (direct) return direct;
+
+  for (const nestedKey of ['data', 'result', 'customer', 'payload']) {
+    const nested = record[nestedKey];
+    if (isRecord(nested)) {
+      const nestedId =
+        asString(nested.id) ?? asString(nested.customer_id) ?? asString(nested.customerId);
+      if (nestedId) return nestedId;
+    }
+  }
+
+  return undefined;
+}
+
+/** Parse Leaping lookup payloads that may arrive as JSON strings or CRM objects. */
+export function normalizeLeapingLookupInput(value: unknown): unknown {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        return JSON.parse(trimmed);
+      } catch {
+        return trimmed;
+      }
+    }
+    return trimmed;
+  }
+  return value;
+}
+
 export function coercePhoneLookupFound(value: unknown): boolean | undefined {
   if (typeof value === 'boolean') return value;
   if (value === 'true') return true;
@@ -68,7 +107,7 @@ export function summarizeLookupStatus(value: unknown): 'found' | 'not_found' | '
       if (errorValue.toLowerCase().includes('kein kunde gefunden')) return 'not_found';
       return 'error';
     }
-    if ('id' in value || 'customer_id' in value) return 'found';
+    if (extractCustomerIdFromRecord(value)) return 'found';
     return undefined;
   }
   return undefined;
@@ -108,7 +147,7 @@ export function toSafeLookupSummary(value: unknown): LookupResultStorage | undef
   if (isRecord(value)) {
     return {
       found: true,
-      id: asString(value.id) ?? asString(value.customer_id) ?? '',
+      id: extractCustomerIdFromRecord(value) ?? '',
       birthday_present: birthdayPresentInRecord(value),
     };
   }

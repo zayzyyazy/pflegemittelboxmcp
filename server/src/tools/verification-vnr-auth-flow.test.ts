@@ -4,7 +4,8 @@ import {
   coerceVerificationVnrBrainInput,
   runVerificationVnrBrain,
 } from './verification-method-brains.js';
-import { toLeapingVerificationBrainResponse } from './verification-brain-response.js';
+import { toLeapingVerificationBrainResponse, toLoggedVerificationBrainResponse } from './verification-brain-response.js';
+import { outputContainsRawCustomerRecord } from './verification-brain-sanitize.js';
 
 const SESSION = 'vnr-auth-flow-test';
 
@@ -126,6 +127,73 @@ test('VNR does not call check_birthday before customer lookup found', () => {
 
   assert.equal(result.next_action, 'CALL_GET_CUSTOMER_BY_INSURANCE_NUMBER');
   assert.notEqual(result.function_to_call, 'check_birthday');
+});
+
+test('VNR full CRM lookup callback sanitizes and asks birthday not VNR', () => {
+  const sessionId = `${SESSION}-crm-callback-regression`;
+  const crmPayload = {
+    id: '107484',
+    birthday: '1956-03-16',
+    mail: 'secret@example.com',
+    name: 'Max Mustermann',
+    vip: true,
+    box_contents: ['handschuhe'],
+    tracking: 'DHL123',
+  };
+
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    vnr_candidate: 'E027064360',
+    vnr_confirmed: true,
+  });
+
+  const callback = runVerificationVnrBrain(
+    coerceVerificationVnrBrainInput({
+      session_id: sessionId,
+      get_customer_by_insurance_number_result: crmPayload,
+      birthday_system: '1956-03-16',
+      birthday_system_available: true,
+    })
+  );
+  const leaping = toLeapingVerificationBrainResponse(callback);
+  const logged = toLoggedVerificationBrainResponse(callback);
+
+  assert.equal(callback.next_action, 'ASK_BIRTHDAY');
+  assert.equal(callback.say, 'Bitte nennen Sie mir zur Verifizierung Ihr Geburtsdatum.');
+  assert.notEqual(callback.next_action, 'ASK_VNR');
+  assert.equal(leaping.action_type, 'SAY_ONLY');
+  assert.equal(leaping.transition_name, null);
+  assert.deepEqual(callback.stored_values?.get_customer_by_insurance_number_result, {
+    found: true,
+    id: '107484',
+    birthday_present: true,
+  });
+  assert.equal(outputContainsRawCustomerRecord(leaping), false);
+  assert.equal(outputContainsRawCustomerRecord(logged), false);
+  assert.equal(JSON.stringify(logged).includes('secret@example.com'), false);
+});
+
+test('VNR CRM lookup callback asks birthday even when vnr fields omitted on input', () => {
+  const sessionId = `${SESSION}-crm-callback-no-vnr-input`;
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    vnr_candidate: 'L039359923',
+    vnr_confirmed: true,
+  });
+
+  const callback = runVerificationVnrBrain(
+    coerceVerificationVnrBrainInput({
+      session_id: sessionId,
+      get_customer_by_insurance_number_result: {
+        id: '107484',
+        birthday: '1956-03-16',
+        mail: 'secret@example.com',
+      },
+    })
+  );
+
+  assert.equal(callback.next_action, 'ASK_BIRTHDAY');
+  assert.equal(callback.stored_values?.vnr_candidate, 'L039359923');
 });
 
 test('VNR full Leaping callback sequence: lookup CRM object then birthday auth', () => {
