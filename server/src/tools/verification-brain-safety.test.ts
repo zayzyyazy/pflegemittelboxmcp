@@ -19,6 +19,7 @@ import {
   sanitizeMcpToolOutput,
   sanitizeVerificationBrainInput,
 } from './verification-brain-sanitize.js';
+import { isLookupFound } from './lookup-result-sanitize.js';
 import { getLogs, logCall } from '../db.js';
 
 const FORBIDDEN_CONTROLLER_KEYS = [
@@ -68,12 +69,19 @@ test('2. address lookup found: customer object sanitized in logs, not in Marie r
     get_customer_by_plz_geb_result: customerObject,
   });
 
-  assert.equal(internal.stored_values?.get_customer_by_plz_geb_result, 'found');
+  assert.equal(isLookupFound(internal.stored_values?.get_customer_by_plz_geb_result), true);
   assert.equal(leaping.action_type, 'TRANSITION');
   assert.equal(leaping.transition_name, 'weiter');
+  assert.deepEqual(logged.debug.stored_values?.get_customer_by_plz_geb_result, {
+    found: true,
+    id: '107484',
+    birthday_present: true,
+  });
   assert.equal(outputContainsRawCustomerRecord(leaping), false);
-  assert.equal((sanitizedInput as { get_customer_by_plz_geb_result: string }).get_customer_by_plz_geb_result, 'found');
-  assert.equal(logged.debug.stored_values?.get_customer_by_plz_geb_result, 'found');
+  assert.deepEqual(
+    (sanitizedInput as { get_customer_by_plz_geb_result: unknown }).get_customer_by_plz_geb_result,
+    { found: true, id: '107484', birthday_present: true }
+  );
   assert.equal(outputContainsRawCustomerRecord(logged), false);
 });
 
@@ -90,10 +98,10 @@ test('3. address lookup not_found object normalizes to not_found without raw sto
   });
   const logged = toLoggedVerificationBrainResponse(internal);
 
+  assert.equal(isLookupFound(internal.stored_values?.get_customer_by_plz_geb_result), false);
   assert.equal(internal.stored_values?.get_customer_by_plz_geb_result, 'not_found');
   assert.equal((sanitizedInput as { get_customer_by_plz_geb_result: string }).get_customer_by_plz_geb_result, 'not_found');
   assert.equal(logged.debug.stored_values?.get_customer_by_plz_geb_result, 'not_found');
-  assert.equal(typeof logged.debug.stored_values?.get_customer_by_plz_geb_result, 'string');
 });
 
 test('4. VNR lookup found: no raw customer object exposed', () => {
@@ -109,7 +117,11 @@ test('4. VNR lookup found: no raw customer object exposed', () => {
 
   assert.equal(internal.next_action, 'ASK_BIRTHDAY');
   assert.equal(outputContainsRawCustomerRecord(leaping), false);
-  assert.equal(logged.debug.stored_values?.get_customer_by_insurance_number_result, 'found');
+  assert.deepEqual(logged.debug.stored_values?.get_customer_by_insurance_number_result, {
+    found: true,
+    id: '999',
+    birthday_present: true,
+  });
   assert.equal(outputContainsRawCustomerRecord(logged), false);
 });
 
@@ -206,8 +218,12 @@ test('9. system-provided birthday from API is not exposed in sanitized output', 
   const sanitizedOutput = sanitizeMcpToolOutput('pmb_verification_address_brain', logged);
 
   assert.equal(outputContainsRawCustomerRecord(sanitizedOutput), false);
-  assert.equal(JSON.stringify(sanitizedOutput).includes('107484'), false);
-  assert.equal(JSON.stringify(sanitizedOutput).includes('secret'), false);
+  const lookupSummary = (
+    sanitizedOutput as { debug: { stored_values: { get_customer_by_plz_geb_result: Record<string, unknown> } } }
+  ).debug.stored_values.get_customer_by_plz_geb_result;
+  assert.equal('birthday' in lookupSummary, false);
+  assert.equal('mail' in lookupSummary, false);
+  assert.deepEqual(lookupSummary, { found: true, id: '107484', birthday_present: true });
 });
 
 test('10. CALL_FUNCTION controller still includes normalized function_arguments', () => {

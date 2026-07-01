@@ -12,7 +12,7 @@ export const LEAPING_VERIFICATION_METHOD_ROUTER_SCHEMA = {
     },
     phone_lookup_found: {
       type: 'boolean',
-      description: 'Result of get_customer_by_phone at call start.',
+      description: 'Result of get_customer_by_phone at call start, or non-empty customer id from id_phone.',
     },
     customer_intent: {
       type: 'string',
@@ -57,7 +57,7 @@ export const LEAPING_VERIFICATION_BRAIN_SCHEMA = {
 export const leapingVerificationMethodRouterZod = {
   session_id: z.string().optional(),
   latest_customer_input: z.string().optional(),
-  phone_lookup_found: z.boolean().optional(),
+  phone_lookup_found: z.union([z.boolean(), z.string()]).optional(),
   customer_intent: z.string().optional(),
 };
 

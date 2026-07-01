@@ -82,7 +82,11 @@ test('5. Leaping-facing response does not expose raw lookup result or full custo
   const leaping = toLeapingVerificationBrainResponse(internal);
   const forbidden = leapingResponseContainsForbiddenDebug(leaping);
 
-  assert.equal(internal.stored_values?.get_customer_by_plz_geb_result, 'found');
+  assert.deepEqual(internal.stored_values?.get_customer_by_plz_geb_result, {
+    found: true,
+    id: 'cust-999',
+    birthday_present: true,
+  });
   assert.equal(leaping.action_type, 'TRANSITION');
   assert.equal(leaping.transition_name, 'weiter');
   assert.equal(forbidden.length, 0, `Leaping response leaked debug keys: ${forbidden.join(', ')}`);

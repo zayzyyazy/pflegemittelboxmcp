@@ -1,4 +1,5 @@
 import type { VerificationBrainSplitResponse } from './verification-brain-response.js';
+import { summarizeLookupStatus, toSafeLookupSummaryForDisplay } from './lookup-result-sanitize.js';
 
 const INPUT_RESULT_FIELDS = [
   'get_customer_by_plz_geb_result',
@@ -67,27 +68,7 @@ function asString(value: unknown): string | undefined {
 }
 
 export function summarizeLookupResult(value: unknown): LookupSummary | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value === 'string') {
-    const normalized = value.trim().toLowerCase();
-    if (!normalized) return undefined;
-    if (normalized === 'not_called') return 'not_called';
-    if (normalized === 'found') return 'found';
-    if (normalized === 'error') return 'error';
-    if (normalized === 'not_found' || normalized.includes('kein kunde gefunden')) return 'not_found';
-    return 'found';
-  }
-  if (typeof value === 'boolean') return value ? 'found' : 'not_found';
-  if (isRecord(value)) {
-    const errorValue = asString(value.error) ?? asString(value.message);
-    if (errorValue) {
-      if (errorValue.toLowerCase().includes('kein kunde gefunden')) return 'not_found';
-      return 'error';
-    }
-    if ('id' in value || 'customer_id' in value) return 'found';
-    return 'error';
-  }
-  return undefined;
+  return summarizeLookupStatus(value);
 }
 
 export function summarizeCheckBirthdayResult(value: unknown): BirthdayCheckSummary | undefined {
@@ -116,7 +97,7 @@ export function summarizeFormatResult(value: unknown): FormatCheckSummary | unde
 
 function summarizeInputResultField(key: string, value: unknown): unknown {
   if (key === 'get_customer_by_plz_geb_result' || key === 'get_customer_by_insurance_number_result') {
-    return summarizeLookupResult(value) ?? value;
+    return toSafeLookupSummaryForDisplay(value);
   }
   if (key === 'check_birthday_result') {
     return summarizeCheckBirthdayResult(value) ?? value;
@@ -155,7 +136,7 @@ function sanitizeStoredValues(storedValues: unknown): unknown {
       } else if (key === 'check_insurance_number_format_result') {
         sanitized[key] = summarizeFormatResult(sanitized[key]) ?? sanitized[key];
       } else {
-        sanitized[key] = summarizeLookupResult(sanitized[key]) ?? sanitized[key];
+        sanitized[key] = toSafeLookupSummaryForDisplay(sanitized[key]);
       }
     }
   }

@@ -4,13 +4,15 @@ import {
   storeVerificationSessionState,
   type VerificationSessionState,
 } from './verification-method-brains.js';
+import { coercePhoneLookupFound } from './lookup-result-sanitize.js';
 
 export type VerificationPath = 'phone' | 'address' | 'vnr';
 
 export interface VerificationMethodRouterInput {
   session_id?: string;
   latest_customer_input?: string;
-  phone_lookup_found?: boolean;
+  /** Boolean true, or non-empty customer id/string/object from Leaping id_phone. */
+  phone_lookup_found?: boolean | string;
   /** Optional intent label from Leaping (e.g. box_change, delivery_status). */
   customer_intent?: string;
 }
@@ -61,7 +63,7 @@ export function coerceVerificationMethodRouterInput(
   return {
     session_id: optionalString(input.session_id),
     latest_customer_input: optionalString(input.latest_customer_input),
-    phone_lookup_found: asBoolean(input.phone_lookup_found),
+    phone_lookup_found: coercePhoneLookupFound(input.phone_lookup_found),
     customer_intent: optionalString(input.customer_intent),
   };
 }
@@ -243,7 +245,7 @@ export function runVerificationMethodRouter(
     return buildChosenPathResult(session.active_verification_path, sessionId, sessionReceived);
   }
 
-  const phoneLookupFound = rawInput.phone_lookup_found;
+  const phoneLookupFound = coercePhoneLookupFound(rawInput.phone_lookup_found);
 
   if (phoneLookupFound === true) {
     persistPathChoice(sessionId, session, 'phone', true);

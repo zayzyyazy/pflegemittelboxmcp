@@ -21,6 +21,17 @@ test('phone_lookup_found=true chooses phone path immediately with empty say', ()
   assert.equal(result.session_id_received, true);
 });
 
+test('phone_lookup_found customer id string routes directly to phone brain', () => {
+  const result = runVerificationMethodRouter({
+    session_id: SESSION + '-phone-id',
+    phone_lookup_found: '107484',
+  });
+
+  assert.equal(result.active_brain, 'phone');
+  assert.equal(result.next_brain, 'pmb_verification_phone_brain');
+  assert.equal(result.say, '');
+});
+
 test('phone_lookup_found=true never asks method choice question', () => {
   const result = runVerificationMethodRouter({
     session_id: SESSION + '-phone-no-ask',
