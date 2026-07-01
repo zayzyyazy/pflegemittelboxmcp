@@ -86,8 +86,27 @@ The server refuses production startup if dashboard auth is not enabled.
 | `pmb_post_call_email_notifier` | Send post-call alert emails, with LLM-drafted email content and deterministic fallback |
 | `health_check` | MCP reachability check |
 | `pmb_health_check` | Alias for `health_check` |
+| `pmb_safe_get_customer_by_plz_geb` | Safe address CRM lookup (proxies Marie `kunde_plzb.php`, returns only `{ found, id?, birthday_present? }`) |
+| `pmb_safe_get_customer_by_insurance_number` | Safe VNR CRM lookup (proxies Marie `kunde_vnr.php`, same safe shape) |
 
-## Post-call monitoring and alerts
+### Marie CRM proxy (safe lookups)
+
+The safe lookup tools call the same Pflegemittelbox PHP API that Leaping native functions use, but **server-side**, so Leaping never sees the full CRM JSON.
+
+```env
+LEAPING_FUNC_BASE=https://pflegemittelbox.de/api_leapingai
+LEAPING_FUNC_TOKEN=your-marie-api-token
+# Optional overrides (defaults match Leaping natives):
+# LEAPING_FUNC_VNR_ENDPOINT=kunde_vnr.php
+# LEAPING_FUNC_PLZ_GEB_ENDPOINT=kunde_plzb.php
+# LEAPING_FUNC_VNR_PARAM=insurance_number
+# LEAPING_FUNC_PLZ_PARAM=plz
+# LEAPING_FUNC_HNR_PARAM=hnr
+# LEAPING_FUNC_BDAY_PARAM=bday
+```
+
+Requests are **GET** with `token` and lookup params in the query string (not POST `/get_customer_by_*`).
+
 
 The server can run an optional background monitor outside the Leaping workflow graph.
 

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import type { MarieCrmClientConfig } from '../crm-client.js';
 import {
   coerceSafeInsuranceLookupInput,
   coerceSafePlzGebLookupInput,
@@ -7,6 +8,17 @@ import {
   runSafeGetCustomerByPlzGeb,
   toPublicSafeLookupResponse,
 } from './safe-customer-lookup.js';
+
+const TEST_CONFIG: MarieCrmClientConfig = {
+  baseUrl: 'https://pflegemittelbox.de/api_leapingai',
+  token: 'test-token',
+  vnrEndpoint: 'kunde_vnr.php',
+  plzGebEndpoint: 'kunde_plzb.php',
+  vnrParam: 'insurance_number',
+  plzParam: 'plz',
+  hnrParam: 'hnr',
+  bdayParam: 'bday',
+};
 
 const CRM_CUSTOMER = {
   id: '107484',
@@ -53,9 +65,10 @@ test('runSafeGetCustomerByPlzGeb proxies CRM and returns safe summary only', asy
   const result = await runSafeGetCustomerByPlzGeb(
     { plz: '41372', house_number: '100', birthday: '1956-03-16' },
     fetchFn,
-    { baseUrl: 'https://crm.test' }
+    TEST_CONFIG
   );
   assert.deepEqual(result, { found: true, id: '107484', birthday_present: true });
+  assert.equal('mail' in result, false);
 });
 
 test('runSafeGetCustomerByInsuranceNumber maps Kein Kunde gefunden to found:false', async () => {
@@ -69,7 +82,7 @@ test('runSafeGetCustomerByInsuranceNumber maps Kein Kunde gefunden to found:fals
   const result = await runSafeGetCustomerByInsuranceNumber(
     { insurance_number: 'L039359923' },
     fetchFn,
-    { baseUrl: 'https://crm.test' }
+    TEST_CONFIG
   );
   assert.deepEqual(result, { found: false });
 });

@@ -1,50 +1,86 @@
-export interface CrmClientConfig {
-  baseUrl: string;
-  apiKey?: string;
-}
+import { appConfig } from './config.js';
 
 export type CrmFetchFn = typeof fetch;
 
-function joinUrl(baseUrl: string, path: string): string {
-  const base = baseUrl.replace(/\/$/, '');
-  const segment = path.replace(/^\//, '');
-  return `${base}/${segment}`;
+export interface MarieCrmClientConfig {
+  baseUrl: string;
+  token: string;
+  vnrEndpoint: string;
+  plzGebEndpoint: string;
+  vnrParam: string;
+  plzParam: string;
+  hnrParam: string;
+  bdayParam: string;
 }
 
-export async function crmPost(
-  path: string,
-  body: Record<string, string>,
-  config: CrmClientConfig,
+function joinUrl(baseUrl: string, endpoint: string): string {
+  const base = baseUrl.replace(/\/$/, '');
+  const path = endpoint.replace(/^\//, '');
+  return `${base}/${path}`;
+}
+
+export function resolveMarieCrmClientConfig(): MarieCrmClientConfig | null {
+  const baseUrl = appConfig.LEAPING_FUNC_BASE ?? appConfig.PFLEGEMITTELBOX_API_BASE;
+  const token =
+    appConfig.LEAPING_FUNC_TOKEN ??
+    appConfig.LEAPING_FUNC_API_KEY ??
+    appConfig.PFLEGEMITTELBOX_API_KEY;
+  if (!baseUrl || !token) return null;
+
+  return {
+    baseUrl,
+    token,
+    vnrEndpoint: appConfig.LEAPING_FUNC_VNR_ENDPOINT,
+    plzGebEndpoint: appConfig.LEAPING_FUNC_PLZ_GEB_ENDPOINT,
+    vnrParam: appConfig.LEAPING_FUNC_VNR_PARAM,
+    plzParam: appConfig.LEAPING_FUNC_PLZ_PARAM,
+    hnrParam: appConfig.LEAPING_FUNC_HNR_PARAM,
+    bdayParam: appConfig.LEAPING_FUNC_BDAY_PARAM,
+  };
+}
+
+export function buildMarieCrmGetUrl(
+  endpoint: string,
+  query: Record<string, string>,
+  config: MarieCrmClientConfig
+): string {
+  const url = new URL(joinUrl(config.baseUrl, endpoint));
+  url.searchParams.set('token', config.token);
+  for (const [key, value] of Object.entries(query)) {
+    if (value.trim()) {
+      url.searchParams.set(key, value.trim());
+    }
+  }
+  return url.toString();
+}
+
+async function parseCrmResponse(response: Response): Promise<unknown> {
+  const text = await response.text();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+export async function marieCrmGet(
+  endpoint: string,
+  query: Record<string, string>,
+  config: MarieCrmClientConfig,
   fetchFn: CrmFetchFn = fetch
 ): Promise<unknown> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'application/json' };
-  if (config.apiKey) {
-    headers.Authorization = `Bearer ${config.apiKey}`;
-  }
-
-  const response = await fetchFn(joinUrl(config.baseUrl, path), {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
+  const url = buildMarieCrmGetUrl(endpoint, query, config);
+  const response = await fetchFn(url, {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
   });
 
-  const text = await response.text();
-  let parsed: unknown = text;
-  if (text) {
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      parsed = text;
-    }
-  } else {
-    parsed = null;
-  }
-
+  const parsed = await parseCrmResponse(response);
   if (!response.ok) {
     if (typeof parsed === 'object' && parsed !== null) return parsed;
     return { error: typeof parsed === 'string' ? parsed : `HTTP ${response.status}` };
   }
-
   return parsed;
 }
 
@@ -56,15 +92,15 @@ export interface PlzGebLookupParams {
 
 export async function getCustomerByPlzGeb(
   params: PlzGebLookupParams,
-  config: CrmClientConfig,
+  config: MarieCrmClientConfig,
   fetchFn: CrmFetchFn = fetch
 ): Promise<unknown> {
-  return crmPost(
-    'get_customer_by_plz_geb',
+  return marieCrmGet(
+    config.plzGebEndpoint,
     {
-      plz: params.plz,
-      house_number: params.house_number,
-      birthday: params.birthday,
+      [config.plzParam]: params.plz,
+      [config.hnrParam]: params.house_number,
+      [config.bdayParam]: params.birthday,
     },
     config,
     fetchFn
@@ -73,8 +109,13 @@ export async function getCustomerByPlzGeb(
 
 export async function getCustomerByInsuranceNumber(
   insurance_number: string,
-  config: CrmClientConfig,
+  config: MarieCrmClientConfig,
   fetchFn: CrmFetchFn = fetch
 ): Promise<unknown> {
-  return crmPost('get_customer_by_insurance_number', { insurance_number }, config, fetchFn);
+  return marieCrmGet(
+    config.vnrEndpoint,
+    { [config.vnrParam]: insurance_number },
+    config,
+    fetchFn
+  );
 }

@@ -127,7 +127,7 @@ export function createMcpServer(): McpServer {
 
   server.tool(
     'pmb_safe_get_customer_by_plz_geb',
-    'Safe CRM lookup by PLZ, house number, and birthday. Calls Marie internally and returns only ' +
+    'Safe CRM lookup by PLZ, house number, and birthday. Proxies Marie GET kunde_plzb.php and returns only ' +
       '{ found: true, id, birthday_present } or { found: false }. No email, delivery, or VIP fields.',
     {
       plz: z.string().describe('5-digit German PLZ.'),
@@ -147,7 +147,7 @@ export function createMcpServer(): McpServer {
 
   server.tool(
     'pmb_safe_get_customer_by_insurance_number',
-    'Safe CRM lookup by insurance number (VNR). Calls Marie internally and returns only ' +
+    'Safe CRM lookup by insurance number (VNR). Proxies Marie GET kunde_vnr.php and returns only ' +
       '{ found: true, id, birthday_present } or { found: false }. No email, delivery, or VIP fields.',
     {
       insurance_number: z.string().describe('Normalized VNR, e.g. L039359923.'),

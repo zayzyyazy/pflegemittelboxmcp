@@ -1,9 +1,9 @@
-import { appConfig } from '../config.js';
 import {
   getCustomerByInsuranceNumber,
   getCustomerByPlzGeb,
-  type CrmClientConfig,
+  resolveMarieCrmClientConfig,
   type CrmFetchFn,
+  type MarieCrmClientConfig,
 } from '../crm-client.js';
 import {
   toSafeLookupSummary,
@@ -44,15 +44,6 @@ export function toPublicSafeLookupResponse(value: unknown): CustomerLookupSafeSu
   return { found: false };
 }
 
-export function resolveCrmClientConfig(): CrmClientConfig | null {
-  const baseUrl = appConfig.LEAPING_FUNC_BASE ?? appConfig.PFLEGEMITTELBOX_API_BASE;
-  if (!baseUrl) return null;
-  return {
-    baseUrl,
-    apiKey: appConfig.LEAPING_FUNC_API_KEY ?? appConfig.PFLEGEMITTELBOX_API_KEY,
-  };
-}
-
 function requireString(value: unknown, field: string): string {
   if (typeof value !== 'string') {
     throw new Error(`"${field}" (string) is required`);
@@ -75,18 +66,22 @@ export function coerceSafeInsuranceLookupInput(input: Record<string, unknown>): 
   return { insurance_number: requireString(input.insurance_number, 'insurance_number') };
 }
 
+function requireMarieCrmConfig(configOverride?: MarieCrmClientConfig): MarieCrmClientConfig {
+  const config = configOverride ?? resolveMarieCrmClientConfig();
+  if (!config) {
+    throw new Error(
+      'Marie CRM proxy is not configured. Set LEAPING_FUNC_BASE and LEAPING_FUNC_TOKEN on the MCP server.'
+    );
+  }
+  return config;
+}
+
 export async function runSafeGetCustomerByPlzGeb(
   input: SafePlzGebLookupInput,
   fetchFn?: CrmFetchFn,
-  configOverride?: CrmClientConfig
+  configOverride?: MarieCrmClientConfig
 ): Promise<CustomerLookupSafeSummary> {
-  const config = configOverride ?? resolveCrmClientConfig();
-  if (!config) {
-    throw new Error(
-      'LEAPING_FUNC_BASE is not configured on the MCP server; cannot proxy CRM lookup safely.'
-    );
-  }
-
+  const config = requireMarieCrmConfig(configOverride);
   const raw = await getCustomerByPlzGeb(
     {
       plz: input.plz,
@@ -102,15 +97,9 @@ export async function runSafeGetCustomerByPlzGeb(
 export async function runSafeGetCustomerByInsuranceNumber(
   input: SafeInsuranceLookupInput,
   fetchFn?: CrmFetchFn,
-  configOverride?: CrmClientConfig
+  configOverride?: MarieCrmClientConfig
 ): Promise<CustomerLookupSafeSummary> {
-  const config = configOverride ?? resolveCrmClientConfig();
-  if (!config) {
-    throw new Error(
-      'LEAPING_FUNC_BASE is not configured on the MCP server; cannot proxy CRM lookup safely.'
-    );
-  }
-
+  const config = requireMarieCrmConfig(configOverride);
   const raw = await getCustomerByInsuranceNumber(input.insurance_number, config, fetchFn);
   return toPublicSafeLookupResponse(raw);
 }
