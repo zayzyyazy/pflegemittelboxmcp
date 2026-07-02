@@ -17,4 +17,5 @@ server/.env.*
 tmp/
 .venv-pdf-ingest/
 .cursor/
+.codex/
 pflegemittelbox-mcp/

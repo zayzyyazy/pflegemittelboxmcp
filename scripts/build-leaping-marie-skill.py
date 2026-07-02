@@ -53,12 +53,15 @@ def main() -> int:
     CURSOR_SKILL.write_text(skill_body, encoding="utf-8")
     CODEX_SKILL.write_text(skill_body, encoding="utf-8")
 
-    refs_cursor = CURSOR_SKILL.parent / "references" / "extracted"
-    refs_codex = CODEX_SKILL.parent / "references" / "extracted"
+    refs_cursor = CURSOR_SKILL.parent / "references"
+    refs_codex = CODEX_SKILL.parent / "references"
     for target in (refs_cursor, refs_codex):
         if target.exists():
             shutil.rmtree(target)
-        shutil.copytree(EXTRACTED, target)
+        shutil.copytree(
+            REPO_ROOT / "skills" / "leaping-marie" / "references",
+            target,
+        )
 
     pack_parts = [
         "# Leaping AI + Marie — knowledge pack\n",

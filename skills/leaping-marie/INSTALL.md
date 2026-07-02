@@ -42,13 +42,19 @@ cp -R .cursor/skills/leaping-marie ~/.cursor/skills/
 
 ## 4. Codex
 
-After build, copy to user skills:
+Generated locally (not in git). After build:
 
 ```bash
 cp -R .codex/skills/leaping-marie ~/.codex/skills/
 ```
 
-Or symlink from this repo if you work here often.
+Or copy canonical source:
+
+```bash
+mkdir -p ~/.codex/skills/leaping-marie
+cp skills/leaping-marie/SKILL.md ~/.codex/skills/leaping-marie/
+cp -R skills/leaping-marie/references ~/.codex/skills/leaping-marie/
+```
 
 ## 5. ChatGPT
 
