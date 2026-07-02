@@ -70,22 +70,35 @@ DASHBOARD_AUTH_PASSWORD=replace-with-a-long-random-password
 
 The server refuses production startup if dashboard auth is not enabled.
 
-## Current production tool list
+## MCP tools
+
+### Leaping-visible tools (`tools/list`)
+
+These are the only tools Marie discovers after MCP reconnect:
 
 | Tool | Purpose |
 | --- | --- |
-| `normalize_vnr` | Normalize messy spoken German VNR text |
-| `pmb_normalize_vnr` | Alias for `normalize_vnr` |
-| `pmb_address_verification_guardrail` | Parse and preserve PLZ, house number, and birthday during address fallback |
-| `pmb_verification_brain` | Deterministic verification decision engine |
-| `pmb_verification_phone_brain` | Clone-only phone verification controller |
-| `pmb_verification_address_brain` | Clone-only address fallback verification controller |
-| `pmb_verification_vnr_brain` | Clone-only VNR verification controller |
-| `pmb_delivery_status_reasoner` | Deterministic delivery-status answer helper |
-| `pmb_post_call_alert_detector` | Detect dropped/failed/problematic calls from structured call data |
-| `pmb_post_call_email_notifier` | Send post-call alert emails, with LLM-drafted email content and deterministic fallback |
-| `health_check` | MCP reachability check |
-| `pmb_health_check` | Alias for `health_check` |
+| `pmb_verification_method_router` | Choose phone / address / VNR verification path |
+| `pmb_verification_phone_brain` | Phone verification step controller |
+| `pmb_verification_address_brain` | Address fallback verification step controller |
+| `pmb_verification_vnr_brain` | VNR verification step controller |
+| `pmb_delivery_status_reasoner` | Delivery-status answer helper (post-ident stages) |
+
+After deploy: disconnect and reconnect the MCP server in Leaping to refresh `tools/list`.
+
+### Internal tools (dashboard / REST API only)
+
+Not exposed to Leaping — still available in the dev dashboard for manual testing:
+
+| Tool | Purpose |
+| --- | --- |
+| `normalize_vnr` / `pmb_normalize_vnr` | Standalone VNR normalization (built into VNR brain) |
+| `pmb_address_verification_guardrail` | Legacy address parser (superseded by address brain) |
+| `pmb_debug_echo_session` / `pmb_debug_echo_session_only` | Session binding smoke tests |
+| `pmb_verification_brain` | Legacy monolithic verification brain |
+| `pmb_post_call_alert_detector` | Post-call QA (background monitor) |
+| `pmb_post_call_email_notifier` | Post-call alert emails |
+| `health_check` / `pmb_health_check` | Server reachability |
 
 ## Post-call monitoring and alerts
 
