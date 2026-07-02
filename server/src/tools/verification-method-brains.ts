@@ -1,5 +1,9 @@
 import { inferPhoneLookupFoundFromLeapingInput } from './leaping-field-bindings.js';
-import { normalizeVnr as normalizeVnrLoose } from './normalize-vnr.js';
+import {
+  extractVnrLeadingLetter,
+  mergeVnrLetterWithDigits,
+  normalizeVnr as normalizeVnrLoose,
+} from './normalize-vnr.js';
 
 export interface VerificationPhoneBrainInput {
   session_id?: string;
@@ -431,8 +435,12 @@ function parseCompactVnr(text: string | undefined): string | undefined {
 
 function isYesLike(text: string | undefined): boolean {
   if (!text) return false;
-  const normalized = text.toLowerCase().trim();
-  return YES_WORDS.some((word) => normalized === word || normalized.includes(word));
+  const normalized = text.toLowerCase().trim().replace(/[.!?,]+$/g, '');
+  if (YES_WORDS.some((word) => normalized === word)) return true;
+  if (extractVnrLeadingLetter(text)) return false;
+  return /^(ja\b|jawohl\b|das stimmt\b|stimmt\b|korrekt\b|richtig\b|genau\b|das ist (korrekt|richtig|stimmt))/.test(
+    normalized
+  );
 }
 
 function isMissingBirthdaySystem(error: string | undefined): boolean {
@@ -471,12 +479,27 @@ function hasFreshVnrPreBirthdayNativeResult(rawInput: VerificationVnrBrainInput)
   );
 }
 
+function hasDigitsOnlyVnrCandidate(
+  session: VerificationSessionState | null | undefined,
+  rawInput: VerificationVnrBrainInput
+): boolean {
+  const candidate = rawInput.vnr_candidate ?? rawInput.vnr_raw ?? session?.vnr_candidate ?? undefined;
+  if (!candidate) return false;
+  return /^[0-9]{9}$/.test(String(candidate).replace(/\s+/g, ''));
+}
+
 function resolveVnrCustomerSpeechInput(
   rawInput: VerificationVnrBrainInput,
-  safetyFlags: string[]
+  safetyFlags: string[],
+  session?: VerificationSessionState | null
 ): string | undefined {
   let text = getSpeechInput(rawInput.latest_customer_input, safetyFlags);
-  if (text && isYesLike(text) && hasFreshVnrPreBirthdayNativeResult(rawInput)) {
+  if (
+    text &&
+    isYesLike(text) &&
+    !extractVnrLeadingLetter(text) &&
+    (hasFreshVnrPreBirthdayNativeResult(rawInput) || hasDigitsOnlyVnrCandidate(session, rawInput))
+  ) {
     if (!safetyFlags.includes('latest_customer_input_ignored_stale_confirmation')) {
       safetyFlags.push('latest_customer_input_ignored_stale_confirmation');
     }
@@ -1862,7 +1885,7 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
     session.active_verification_path = 'vnr';
   }
   const extraSafetyFlags: string[] = [];
-  const latestText = resolveVnrCustomerSpeechInput(rawInput, extraSafetyFlags);
+  const latestText = resolveVnrCustomerSpeechInput(rawInput, extraSafetyFlags, session);
 
   if (isNeukundeLike(rawInput.latest_customer_input)) {
     return finalizeGenericBrainResult(
@@ -1885,11 +1908,16 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
     : undefined;
   const sessionCandidate = session?.vnr_candidate ?? undefined;
   const boundCandidate = rawInput.vnr_candidate ?? rawInput.vnr_raw ?? undefined;
+  const digitsOnlyBase = [boundCandidate, sessionCandidate].find((value) =>
+    value ? /^[0-9]{9}$/.test(String(value).replace(/\s+/g, '')) : false
+  );
+  const letterMergedVnr = latestText ? mergeVnrLetterWithDigits(digitsOnlyBase, latestText) : undefined;
   // Fresh valid parse from this turn beats stale session (e.g. digits-only poison from lowercase STT).
   const resolvedVnr = normalizeVnr(
     latestCandidate && /^[A-Z][0-9]{9}$/.test(latestCandidate)
       ? latestCandidate
-      : boundCandidate ?? sessionCandidate ?? latestCandidate ?? undefined
+      : letterMergedVnr ??
+          (boundCandidate ?? sessionCandidate ?? latestCandidate ?? undefined)
   );
   const birthdayMerge = mergeBirthday(
     rawInput.birthday_customer ?? session?.birthday_customer ?? undefined,
@@ -1903,7 +1931,9 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
     vnr_candidate: resolvedVnr,
     vnr_confirmed:
       rawInput.vnr_confirmed === true ||
-      ((rawInput.vnr_candidate !== undefined || session?.vnr_candidate !== null) && isYesLike(latestText))
+      ((rawInput.vnr_candidate !== undefined || session?.vnr_candidate !== null) &&
+        isYesLike(latestText) &&
+        !extractVnrLeadingLetter(latestText ?? ''))
         ? true
         : rawInput.vnr_confirmed ?? session?.vnr_confirmed ?? undefined,
     birthday_customer: birthdayMerge.value,

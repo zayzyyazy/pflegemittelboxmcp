@@ -205,3 +205,60 @@ test('stabilization: stale ja on lookup-result turn asks birthday normally', () 
   assert.ok(result.safety_flags.includes('latest_customer_input_ignored_stale_confirmation'));
   assert.ok(!result.safety_flags.includes('birthday_parse_failed'));
 });
+
+test('stabilization: digits first then phonetic letter e wie Emil confirms VNR', () => {
+  const sessionId = 'vnr-letter-emil';
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'zwei null sieben null sechs vier drei sechs null',
+  });
+  const result = runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'e wie Emil',
+  });
+  assert.equal(result.next_action, 'CONFIRM_VNR');
+  assert.match(result.say, /E207064360/);
+});
+
+test('stabilization: digits first then die Emil confirms VNR', () => {
+  const sessionId = 'vnr-letter-die-emil';
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'zwei null sieben null sechs vier drei sechs null',
+  });
+  const result = runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'die Emil',
+  });
+  assert.equal(result.next_action, 'CONFIRM_VNR');
+  assert.match(result.say, /E207064360/);
+});
+
+test('stabilization: digits first then e wie E-Mail confirms VNR', () => {
+  const sessionId = 'vnr-letter-email';
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'zwei null sieben null sechs vier drei sechs null',
+  });
+  const result = runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'Das ist genau e wie E-Mail.',
+  });
+  assert.equal(result.next_action, 'CONFIRM_VNR');
+  assert.match(result.say, /E207064360/);
+});
+
+test('stabilization: stale ja on ASK_VNR_LETTER re-prompts without treating as letter', () => {
+  const sessionId = 'vnr-stale-ja-letter';
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'zwei null sieben null sechs vier drei sechs null',
+  });
+  const result = runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'Ja.',
+  });
+  assert.equal(result.next_action, 'ASK_VNR_LETTER');
+  assert.ok(result.safety_flags.includes('latest_customer_input_ignored_stale_confirmation'));
+  assert.ok(result.missing_fields.includes('vnr_letter'));
+});

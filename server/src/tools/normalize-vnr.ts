@@ -1,3 +1,92 @@
+/** German NATO / police alphabet word → letter (for standalone "die Emil" etc.). */
+const PHONETIC_WORD_TO_LETTER: Record<string, string> = {
+  anton: 'A',
+  berta: 'B',
+  caesar: 'C',
+  dora: 'D',
+  emil: 'E',
+  email: 'E',
+  friedrich: 'F',
+  gustav: 'G',
+  heinrich: 'H',
+  ida: 'I',
+  julius: 'J',
+  kaufmann: 'K',
+  ludwig: 'L',
+  martha: 'M',
+  nordpol: 'N',
+  otto: 'O',
+  paula: 'P',
+  quelle: 'Q',
+  richard: 'R',
+  samuel: 'S',
+  theodor: 'T',
+  ulrich: 'U',
+  viktor: 'V',
+  wilhelm: 'W',
+  xanthippe: 'X',
+  ypsilon: 'Y',
+  zeppelin: 'Z',
+};
+
+function normalizePhoneticToken(token: string): string {
+  return token
+    .toLowerCase()
+    .replace(/ä/g, 'ae')
+    .replace(/ö/g, 'oe')
+    .replace(/ü/g, 'ue')
+    .replace(/ß/g, 'ss');
+}
+
+/**
+ * Extract only the leading insurance letter from spoken text (no digits required).
+ * Handles "e wie Emil", "die Emil", "Das ist genau e wie E-Mail", and lone "e".
+ */
+export function extractVnrLeadingLetter(text: string): string | undefined {
+  const trimmed = text.trim();
+  if (!trimmed) return undefined;
+  const lower = trimmed.toLowerCase();
+
+  const phoneticMatch = lower.match(/\b([a-z])[,\s]+wie\s+[\w-]+/);
+  if (phoneticMatch) {
+    return phoneticMatch[1].toUpperCase();
+  }
+
+  const tokens = lower.split(/[\s,.\-/]+/).filter(Boolean);
+  const firstToken = tokens[0];
+  if (firstToken && /^[a-z]$/.test(firstToken)) {
+    return firstToken.toUpperCase();
+  }
+
+  for (const rawToken of tokens) {
+    const token = normalizePhoneticToken(rawToken);
+    const letter = PHONETIC_WORD_TO_LETTER[token];
+    if (letter) return letter;
+  }
+
+  if (tokens.length === 1 && /^[a-z]$/.test(tokens[0])) {
+    return tokens[0].toUpperCase();
+  }
+
+  const bareMatch = trimmed.match(/\b([A-Z])\b/);
+  if (bareMatch) return bareMatch[1];
+
+  return undefined;
+}
+
+/** Merge a spoken letter with nine session digits into a full VNR candidate. */
+export function mergeVnrLetterWithDigits(
+  digitsCandidate: string | undefined,
+  letterText: string | undefined
+): string | undefined {
+  if (!digitsCandidate || !letterText) return undefined;
+  const digits = digitsCandidate.replace(/\s+/g, '');
+  if (!/^[0-9]{9}$/.test(digits)) return undefined;
+  const letter = extractVnrLeadingLetter(letterText);
+  if (!letter) return undefined;
+  return letter + digits;
+}
+
 // Mapping of German spoken number words → single digit character
 const WORD_TO_DIGIT: Record<string, string> = {
   null: '0',
@@ -58,26 +147,12 @@ export function normalizeVnr(text: string): NormalizeVnrResult {
   }
 
   // ── Step 1: Extract the starting letter ──────────────────────────────
-  // Primary: phonetic form "X wie Word" or "X, wie Word"
-  const phoneticMatch = lower.match(/\b([a-z])[,\s]+wie\s+\w+/);
-  if (phoneticMatch) {
-    letter = phoneticMatch[1].toUpperCase();
-    notes.push(`Extracted ${letter} from phonetic "wie" pattern.`);
-  } else {
-    // Fallback: bare capital letter at a word boundary in the original text
-    const bareMatch = trimmed.match(/\b([A-Z])\b/);
-    if (bareMatch) {
-      letter = bareMatch[1];
-      notes.push(`Extracted bare letter ${letter} (no phonetic context).`);
+  const extractedLetter = extractVnrLeadingLetter(trimmed);
+  if (extractedLetter) {
+    letter = extractedLetter;
+    notes.push(`Extracted ${letter} from spoken letter cues.`);
+    if (!/\b[a-z][,\s]+wie\s+/i.test(lower) && !/^[a-z]$/i.test(trimmed.split(/[\s,.\-/]+/).filter(Boolean)[0] ?? '')) {
       confidence = 'medium';
-    } else {
-      // STT often lowercases the leading letter: "e zwei null sieben..."
-      const firstToken = lower.split(/[\s,.\-/]+/).filter(Boolean)[0];
-      if (firstToken && /^[a-z]$/.test(firstToken)) {
-        letter = firstToken.toUpperCase();
-        notes.push(`Extracted leading letter ${letter} from first spoken token.`);
-        confidence = 'medium';
-      }
     }
   }
 
@@ -85,12 +160,19 @@ export function normalizeVnr(text: string): NormalizeVnrResult {
   // Do NOT use a blanket single-letter strip: ü in "fünf" creates a false \b
   // boundary before the leading f, which would get silently removed.
   let remaining = lower;
-  if (phoneticMatch) {
-    // Remove the entire "X wie Word" block
-    remaining = lower.replace(/\b[a-z][,\s]+wie\s+\w+/, ' ');
+  if (/\b[a-z][,\s]+wie\s+[\w-]+/.test(lower)) {
+    remaining = lower.replace(/\b[a-z][,\s]+wie\s+[\w-]+/, ' ');
   } else if (letter) {
-    // Remove only the first standalone occurrence of this specific letter
-    remaining = lower.replace(new RegExp(`\\b${letter.toLowerCase()}\\b`), ' ');
+    for (const rawToken of lower.split(/[\s,.\-/]+/).filter(Boolean)) {
+      const token = normalizePhoneticToken(rawToken);
+      if (PHONETIC_WORD_TO_LETTER[token] === letter) {
+        remaining = lower.replace(new RegExp(`\\b${rawToken.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`), ' ');
+        break;
+      }
+    }
+    if (remaining === lower) {
+      remaining = lower.replace(new RegExp(`\\b${letter.toLowerCase()}\\b`), ' ');
+    }
   }
 
   const tokens = remaining.split(/[\s,.\-/]+/).filter(Boolean);
