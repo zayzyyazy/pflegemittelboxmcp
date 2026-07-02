@@ -46,6 +46,7 @@ These match your `~/Documents/` exports:
 | File | Topic |
 |------|--------|
 | `Agent builder (Studio) - Leaping AI docs.pdf` | Studio / agent builder |
+| `Create agent - Leaping AI docs.pdf` | Create agent |
 | `Calls - Leaping AI docs.pdf` | Calls UI |
 | `Create phone deployment - Leaping AI docs.pdf` | Phone deployment |
 | `Details - Leaping AI docs.pdf` | Agent details |
