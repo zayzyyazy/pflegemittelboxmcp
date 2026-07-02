@@ -1136,6 +1136,51 @@ function parseAddressFieldFromUtterance(
   return {};
 }
 
+function parseAddressCorrectionsFromUtterance(
+  rawText: string | undefined,
+  existing: { plz?: string; house_number?: string; birthday?: string },
+  pendingDay?: number | null,
+  pendingMonth?: number | null
+): {
+  plz?: string;
+  house_number?: string;
+  birthdayMerge?: ReturnType<typeof mergeBirthday>;
+  corrected: boolean;
+} {
+  if (!rawText) return { corrected: false };
+
+  let corrected = false;
+  const patch: {
+    plz?: string;
+    house_number?: string;
+    birthdayMerge?: ReturnType<typeof mergeBirthday>;
+    corrected: boolean;
+  } = { corrected: false };
+
+  const plz = parsePlz(rawText);
+  if (plz && /^\d{5}$/.test(plz) && plz !== existing.plz) {
+    patch.plz = plz;
+    corrected = true;
+  }
+
+  if (!utteranceContainsValidPlz(rawText)) {
+    const house_number = parseHouseNumberFromUtterance(rawText);
+    if (house_number && house_number !== existing.house_number) {
+      patch.house_number = house_number;
+      corrected = true;
+    }
+  }
+
+  const birthdayMerge = mergeBirthday(existing.birthday, rawText, pendingDay, pendingMonth);
+  if (birthdayMerge.value && birthdayMerge.value !== existing.birthday) {
+    patch.birthdayMerge = birthdayMerge;
+    corrected = true;
+  }
+
+  patch.corrected = corrected;
+  return patch;
+}
+
 function buildPlzGebFunctionArgs(plz: string, house_number: string, birthday_customer: string) {
   const hnr = house_number;
   const bday = birthday_customer;
@@ -1766,9 +1811,23 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
     sessionAwaiting: session?.awaiting_field,
   });
 
+  const addressCorrections =
+    awaitingField === 'confirm_address'
+      ? parseAddressCorrectionsFromUtterance(
+          latestText,
+          { plz: basePlz, house_number: baseHouseNumber, birthday: baseBirthday },
+          session?.pending_birthday_day,
+          session?.pending_birthday_month
+        )
+      : { corrected: false as const };
+
   const parsedFromLatest =
     awaitingField === 'confirm_address'
-      ? {}
+      ? {
+          plz: addressCorrections.plz,
+          house_number: addressCorrections.house_number,
+          birthdayMerge: addressCorrections.birthdayMerge,
+        }
       : parseAddressFieldFromUtterance(
           awaitingField,
           latestText,
@@ -1781,13 +1840,15 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
     parsedFromLatest.birthdayMerge ??
     mergeBirthday(baseBirthday, undefined, session?.pending_birthday_day, session?.pending_birthday_month);
 
+  const lookupAfterCorrection = addressCorrections.corrected ? 'not_called' : baseLookupResult;
+
   const input: VerificationAddressBrainInput = {
     ...rawInput,
     phone_lookup_found: rawInput.phone_lookup_found ?? session?.phone_lookup_found ?? undefined,
     plz: parsedFromLatest.plz ?? basePlz,
     house_number: parsedFromLatest.house_number ?? baseHouseNumber,
     birthday_customer: birthdayMerge.value,
-    get_customer_by_plz_geb_result: baseLookupResult,
+    get_customer_by_plz_geb_result: lookupAfterCorrection,
     address_lookup_attempts: baseLookupAttempts,
   };
 
@@ -1833,6 +1894,8 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
       if (input.get_customer_by_plz_geb_result !== 'not_called') {
         session.attempts.address_lookup_attempts += 1;
       }
+    } else if (addressCorrections.corrected) {
+      session.get_customer_by_plz_geb_result = 'not_called';
     }
   }
 
@@ -2025,9 +2088,14 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
       ok: true,
       next_action: 'CALL_GET_CUSTOMER_BY_PLZ_GEB',
       say: '',
-      reason: 'PLZ, house number, and birthday are complete.',
+      reason: addressCorrections.corrected
+        ? 'Customer corrected stored address values, so a fresh lookup is required.'
+        : 'PLZ, house number, and birthday are complete.',
       missing_fields: [],
-      safety_flags: ['never_call_check_birthday_in_address_path'],
+      safety_flags: [
+        'never_call_check_birthday_in_address_path',
+        ...(addressCorrections.corrected ? ['address_corrected'] : []),
+      ],
       function_to_call: 'get_customer_by_plz_geb',
       function_arguments: plzGebArgs?.function_arguments,
       leaping_function_arguments: plzGebArgs?.leaping_function_arguments,

@@ -10,6 +10,7 @@ import {
 import {
   coerceVerificationPhoneBrainInput,
   coerceVerificationVnrBrainInput,
+  runVerificationAddressBrain,
   runVerificationPhoneBrain,
   runVerificationVnrBrain,
 } from './verification-method-brains.js';
@@ -354,4 +355,30 @@ test('stabilization: spoken full birthday then ISO echo proceeds to check', () =
   });
   assert.equal(echo.next_action, 'CALL_CHECK_BIRTHDAY');
   assert.deepEqual(echo.function_arguments, { birthday: '1956-03-16' });
+});
+
+test('stabilization: address PLZ correction after not_found retries lookup', () => {
+  const sessionId = 'addr-plz-correction';
+  runVerificationAddressBrain({
+    session_id: sessionId,
+    plz: '41371',
+    house_number: '100',
+    birthday_customer: '1956-03-16',
+  });
+  runVerificationAddressBrain({
+    session_id: sessionId,
+    get_customer_by_plz_geb_result: 'not_found',
+  });
+  const corrected = runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'Nein, die Postleitzahl ist vier eins drei sieben zwei',
+  });
+  assert.equal(corrected.next_action, 'CALL_GET_CUSTOMER_BY_PLZ_GEB');
+  assert.equal(corrected.stored_values?.plz, '41372');
+  assert.deepEqual(corrected.function_arguments, {
+    plz: '41372',
+    hnr: '100',
+    bday: '1956-03-16',
+  });
+  assert.ok(corrected.safety_flags.includes('address_corrected'));
 });
