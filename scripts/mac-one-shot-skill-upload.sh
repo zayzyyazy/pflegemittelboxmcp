@@ -40,12 +40,13 @@ if [[ "$count" -eq 0 ]]; then
 fi
 echo "Copied $count PDF(s)"
 
-echo "=== 3/6 Install pypdf (if needed) ==="
-python3 -m pip install --user pypdf -q
+echo "=== 3/6 Python venv + pypdf (Mac-safe) ==="
+PYTHON="$(bash "$REPO/scripts/ensure-pdf-python.sh")"
+echo "Using: $PYTHON"
 
 echo "=== 4/6 Extract PDF text to markdown ==="
-python3 "$REPO/scripts/ingest-leaping-pdfs.py"
-python3 "$REPO/scripts/build-leaping-marie-skill.py"
+"$PYTHON" "$REPO/scripts/ingest-leaping-pdfs.py"
+"$PYTHON" "$REPO/scripts/build-leaping-marie-skill.py"
 
 echo "=== 5/6 Commit (markdown + PDFs) ==="
 git add skills/leaping-marie/

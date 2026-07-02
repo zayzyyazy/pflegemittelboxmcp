@@ -15,5 +15,6 @@ server/.env.*
 *.db-shm
 *.db-wal
 tmp/
+.venv-pdf-ingest/
 .cursor/
 pflegemittelbox-mcp/

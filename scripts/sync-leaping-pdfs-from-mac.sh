@@ -30,8 +30,9 @@ fi
 echo "Copied $count PDF(s) to skills/leaping-marie/source-pdfs/"
 
 if [[ "${1:-}" == "--ingest" ]] || [[ "${2:-}" == "--ingest" ]]; then
-  python3 "$REPO_ROOT/scripts/ingest-leaping-pdfs.py"
-  python3 "$REPO_ROOT/scripts/build-leaping-marie-skill.py"
+  PYTHON="$(bash "$REPO_ROOT/scripts/ensure-pdf-python.sh")"
+  "$PYTHON" "$REPO_ROOT/scripts/ingest-leaping-pdfs.py"
+  "$PYTHON" "$REPO_ROOT/scripts/build-leaping-marie-skill.py"
 fi
 
 if [[ "${1:-}" == "--push" ]] || [[ "${2:-}" == "--push" ]] || [[ "${3:-}" == "--push" ]]; then
