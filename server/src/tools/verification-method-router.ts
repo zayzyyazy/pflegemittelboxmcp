@@ -116,15 +116,21 @@ function detectVnrPreference(text: string | undefined): boolean {
     'versichertennummer',
     'versicherungsnummer',
     'versicherten nummer',
+    'versicherungs nummer',
+    'versicherte nummer',
     'krankenversicherungsnummer',
     'krankenkassennummer',
     'vnr',
     'ueber die nummer',
     'über die nummer',
     'mit der nummer',
+    'ueber die versichert',
+    'über die versichert',
+    'mit der versichert',
     'versicherungs nummer',
   ];
   if (vnrKeywords.some((keyword) => normalized.includes(keyword))) return true;
+  if (normalized.includes('versichert') && normalized.includes('nummer')) return true;
 
   const candidate = normalizeVnrLoose(text).candidate;
   return Boolean(candidate && /^[A-Z][0-9]{9}$/.test(candidate));

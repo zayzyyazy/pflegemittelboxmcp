@@ -551,3 +551,108 @@ test('stabilization: address retry request after failed lookups reopens confirma
   assert.match(retry.say ?? '', /noch einmal über die Postleitzahl/);
   assert.ok(retry.safety_flags.includes('address_retry_requested'));
 });
+
+test('stabilization: was über die Postleitzahl STT variant prompts PLZ politely', () => {
+  const result = runVerificationAddressBrain({
+    session_id: 'addr-was-ueber-plz',
+    latest_customer_input: 'Machen wir was über die Postleitzahl?',
+    phone_lookup_found: false,
+  });
+  assert.equal(result.next_action, 'ASK_PLZ');
+  assert.match(result.say ?? '', /Gerne über die Postleitzahl/);
+  assert.equal(result.attempts?.plz_attempts, 0);
+});
+
+test('stabilization: versicherte Nummer method switch from address brain', () => {
+  const result = runVerificationAddressBrain({
+    session_id: 'addr-switch-vnr',
+    latest_customer_input: 'Machen wir das über die versicherte Nummer?',
+    phone_lookup_found: false,
+  });
+  assert.equal(result.next_action, 'ASK_VNR');
+  assert.match(result.say ?? '', /Versicherungsnummer/);
+  assert.ok(result.safety_flags.includes('method_switch_to_vnr'));
+  assert.equal(result.awaiting_field, null);
+});
+
+test('stabilization: path switch address to VNR clears awaiting_field plz bleed', () => {
+  const sessionId = 'addr-vnr-awaiting-clear';
+  runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'Machen wir was über die Postleitzahl?',
+    phone_lookup_found: false,
+  });
+  const vnr = runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'versicherten Nummer',
+  });
+  assert.equal(vnr.next_action, 'ASK_VNR');
+  assert.equal(vnr.awaiting_field, null);
+});
+
+test('stabilization: confirm yes blocked when birthday year incomplete', () => {
+  const sessionId = 'addr-confirm-incomplete-bday';
+  runVerificationAddressBrain({
+    session_id: sessionId,
+    plz: '41372',
+    house_number: '100',
+    birthday_customer: '1976-03-16',
+    get_customer_by_plz_geb_result: 'not_found',
+  });
+  const partialOnConfirm = runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'sechzehnter März',
+  });
+  assert.equal(partialOnConfirm.next_action, 'ASK_BIRTH_YEAR');
+  assert.ok(partialOnConfirm.safety_flags.includes('birthday_incomplete_on_confirm'));
+
+  const yes = runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'Ja, das ist alles korrekt',
+  });
+  assert.equal(yes.next_action, 'CALL_GET_CUSTOMER_BY_PLZ_GEB');
+  assert.equal(yes.function_arguments?.bday, '1976-03-16');
+});
+
+test('stabilization: customer asking what birthday was stored gets echo from MCP', () => {
+  const sessionId = 'addr-bday-echo-request';
+  runVerificationAddressBrain({
+    session_id: sessionId,
+    plz: '41372',
+    house_number: '100',
+    birthday_customer: '1956-03-16',
+    get_customer_by_plz_geb_result: 'not_found',
+  });
+  const echo = runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'Was für ein Geburtsdatum haben Sie verstanden?',
+  });
+  assert.match(echo.say ?? '', /1956/);
+  assert.match(echo.say ?? '', /März/);
+  assert.ok(echo.safety_flags.includes('birthday_echo_on_request'));
+});
+
+test('stabilization: VNR birthday retry uses session-stored correction without fresh speech', () => {
+  const sessionId = 'vnr-bday-session-retry';
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    vnr_candidate: 'E207064360',
+    vnr_confirmed: true,
+    check_insurance_number_format_result: 'valid',
+    get_customer_by_insurance_number_result: 'found',
+  });
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'Sechzehnter Fünfter neunzehnhundertsechsundfünfzig',
+    birthday_system_available: true,
+  });
+  runVerificationVnrBrain({ session_id: sessionId, check_birthday_result: 'failed' });
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'Sechzehnter März neunzehnhundertsechsundfünfzig',
+    birthday_system_available: true,
+  });
+  const staleRetry = runVerificationVnrBrain({ session_id: sessionId });
+  assert.equal(staleRetry.next_action, 'CALL_CHECK_BIRTHDAY');
+  assert.equal(staleRetry.function_arguments?.birthday, '1956-03-16');
+});

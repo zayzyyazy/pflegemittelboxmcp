@@ -122,6 +122,8 @@ export interface VerificationSessionState extends VerificationSessionStoredValue
   pending_plz_digits: string | null;
   pending_plz_confirm: string | null;
   awaiting_field: AddressAwaitingField | null;
+  /** Birthday value used in the last failed check_birthday call (VNR/phone retry hardening). */
+  birthday_at_last_failed_check: string | null;
   attempts: VerificationSessionAttempts;
 }
 
@@ -348,6 +350,7 @@ function emptySessionState(): VerificationSessionState {
     pending_plz_digits: null,
     pending_plz_confirm: null,
     awaiting_field: null,
+    birthday_at_last_failed_check: null,
     attempts: emptyAttempts(),
   };
 }
@@ -467,20 +470,60 @@ function normalizeUtteranceForCue(text: string): string {
   return text.toLowerCase().trim().replace(/[.!?,]+$/g, '');
 }
 
+/** ASCII-normalized speech for keyword cues (ü→ue, etc.) — avoids JS \\b failures on umlauts. */
+function normalizeSpeechCueText(text: string): string {
+  return normalizeUtteranceForCue(text)
+    .replace(/ä/g, 'ae')
+    .replace(/ö/g, 'oe')
+    .replace(/ü/g, 'ue')
+    .replace(/ß/g, 'ss');
+}
+
 function utteranceMentionsPostalCodeMethod(text: string | undefined): boolean {
   if (!text) return false;
-  const normalized = normalizeUtteranceForCue(text);
+  const normalized = normalizeSpeechCueText(text);
+  const mentionsPlz =
+    normalized.includes('postleitzahl') ||
+    normalized.includes('post leitzahl') ||
+    /\bplz\b/.test(normalized);
+  if (!mentionsPlz) return false;
   return (
-    /\b(über|mit|per|via)\s+(die\s+)?post\s*-?\s*leitzahl\b/.test(normalized) ||
-    /\bpost\s*-?\s*leitzahl\s+(bitte|wäre|waere|gerne)\b/.test(normalized) ||
-    /\b(postleitzahl|plz)\s+(nutzen|verwenden|nehmen|machen)\b/.test(normalized)
+    normalized.includes('ueber die postleitzahl') ||
+    normalized.includes('ueber postleitzahl') ||
+    normalized.includes('mit der postleitzahl') ||
+    normalized.includes('mit postleitzahl') ||
+    normalized.includes('per postleitzahl') ||
+    normalized.includes('postleitzahl bitte') ||
+    normalized.includes('postleitzahl nutzen') ||
+    normalized.includes('postleitzahl verwenden') ||
+    normalized.includes('postleitzahl nehmen') ||
+    normalized.includes('postleitzahl machen') ||
+    normalized.includes('machen wir') ||
+    normalized.includes('machen wa') ||
+    normalized.includes('wir das ueber') ||
+    normalized.includes('lieber die postleitzahl') ||
+    normalized.includes('lieber postleitzahl')
   );
 }
 
 function utteranceMentionsInsuranceMethod(text: string | undefined): boolean {
   if (!text) return false;
-  const normalized = normalizeUtteranceForCue(text);
-  return /\b(versicherungsnummer|versichertennummer|vnr)\b/.test(normalized);
+  const normalized = normalizeSpeechCueText(text);
+  return (
+    normalized.includes('versichertennummer') ||
+    normalized.includes('versicherungsnummer') ||
+    normalized.includes('versicherten nummer') ||
+    normalized.includes('versicherungs nummer') ||
+    normalized.includes('versicherte nummer') ||
+    normalized.includes('krankenversicherungsnummer') ||
+    normalized.includes('krankenkassennummer') ||
+    /\bvnr\b/.test(normalized) ||
+    normalized.includes('ueber die nummer') ||
+    normalized.includes('ueber die versichert') ||
+    normalized.includes('mit der versichert') ||
+    normalized.includes('versichertennummer') ||
+    (normalized.includes('versichert') && normalized.includes('nummer'))
+  );
 }
 
 function utteranceIsAddressMethodChoice(text: string | undefined): boolean {
@@ -507,8 +550,72 @@ function utteranceShouldNotCountAsPlzAttempt(text: string | undefined): boolean 
   return (
     utteranceIsAddressMethodChoice(text) ||
     utteranceIsWaitingOrDeferral(text) ||
-    utteranceIsStalePlzAcknowledgement(text)
+    utteranceIsStalePlzAcknowledgement(text) ||
+    utteranceIsStaleRouterMethodPrompt(text)
   );
+}
+
+function utteranceIsStaleRouterMethodPrompt(text: string | undefined): boolean {
+  if (!text) return false;
+  const normalized = normalizeSpeechCueText(text);
+  return (
+    normalized.includes('was ist ihnen lieber') ||
+    normalized.includes('was ist dir lieber') ||
+    normalized.includes('versichertennummer oder') ||
+    normalized.includes('postleitzahl oder') ||
+    normalized.includes('identifizieren was ist')
+  );
+}
+
+function utteranceAsksWhatBirthdayWasStored(text: string | undefined): boolean {
+  if (!text) return false;
+  const normalized = normalizeSpeechCueText(text);
+  return (
+    (normalized.includes('geburtsdatum') || normalized.includes('geburtstag')) &&
+    (normalized.includes('haben sie') ||
+      normalized.includes('hast du') ||
+      normalized.includes('was fuer') ||
+      normalized.includes('welches') ||
+      normalized.includes('verstanden'))
+  );
+}
+
+function formatBirthdayIsoForCustomerEcho(iso: string): string {
+  const match = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return iso;
+  const year = match[1];
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const monthNames = [
+    '',
+    'Januar',
+    'Februar',
+    'März',
+    'April',
+    'Mai',
+    'Juni',
+    'Juli',
+    'August',
+    'September',
+    'Oktober',
+    'November',
+    'Dezember',
+  ];
+  const monthName = monthNames[month] ?? match[2];
+  return `${day}. ${monthName} ${year}`;
+}
+
+function ensureVerificationPath(
+  session: VerificationSessionState | null,
+  path: 'phone' | 'address' | 'vnr'
+): void {
+  if (!session) return;
+  if (session.active_verification_path && session.active_verification_path !== path) {
+    session.awaiting_field = null;
+    session.pending_plz_digits = null;
+    session.pending_plz_confirm = null;
+  }
+  session.active_verification_path = path;
 }
 
 function utteranceRequestsAddressRetry(text: string | undefined): boolean {
@@ -1342,6 +1449,10 @@ function parseAddressCorrectionsFromUtterance(
 } {
   if (!rawText) return { corrected: false };
 
+  if (utteranceAsksWhatBirthdayWasStored(rawText)) {
+    return { corrected: false };
+  }
+
   const birthdayCue = hasAddressFieldCue(rawText, 'birthday');
   const plzCue = hasAddressFieldCue(rawText, 'plz');
   const houseCue = hasAddressFieldCue(rawText, 'house_number');
@@ -1517,20 +1628,42 @@ function tryApplyBirthdayCorrectionAfterFailedCheck(args: {
   input: { birthday_customer?: string; check_birthday_result?: string };
 }): ReturnType<typeof buildCheckBirthdayFunctionArgs> | null {
   if (
-    !args.latestText ||
-    args.birthdayMerge.parse.status !== 'complete' ||
-    !args.birthdayMerge.value
+    args.latestText &&
+    args.birthdayMerge.parse.status === 'complete' &&
+    args.birthdayMerge.value
   ) {
-    return null;
+    args.input.birthday_customer = args.birthdayMerge.value;
+    args.input.check_birthday_result = 'not_called';
+    if (args.session) {
+      args.session.birthday_customer = args.birthdayMerge.value;
+      args.session.check_birthday_result = 'not_called';
+    }
+    return buildCheckBirthdayFunctionArgs(args.birthdayMerge.value);
   }
 
-  args.input.birthday_customer = args.birthdayMerge.value;
-  args.input.check_birthday_result = 'not_called';
-  if (args.session) {
-    args.session.birthday_customer = args.birthdayMerge.value;
-    args.session.check_birthday_result = 'not_called';
+  if (
+    args.session?.birthday_at_last_failed_check &&
+    args.input.birthday_customer &&
+    hasCompleteIsoBirthday(args.input.birthday_customer) &&
+    args.input.birthday_customer !== args.session.birthday_at_last_failed_check
+  ) {
+    args.input.check_birthday_result = 'not_called';
+    if (args.session) {
+      args.session.check_birthday_result = 'not_called';
+    }
+    return buildCheckBirthdayFunctionArgs(args.input.birthday_customer);
   }
-  return buildCheckBirthdayFunctionArgs(args.birthdayMerge.value);
+
+  return null;
+}
+
+function recordBirthdayCheckFailed(
+  session: VerificationSessionState | null,
+  birthday: string | undefined
+): void {
+  if (session && birthday && hasCompleteIsoBirthday(birthday)) {
+    session.birthday_at_last_failed_check = birthday;
+  }
 }
 
 function buildInsuranceNumberFunctionArgs(insurance_number: string) {
@@ -1908,7 +2041,7 @@ export function coerceVerificationVnrBrainInput(input: Record<string, unknown>):
 export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput): VerificationMethodBrainResult {
   const session = getSessionState(rawInput.session_id);
   if (session) {
-    session.active_verification_path = 'phone';
+    ensureVerificationPath(session, 'phone');
     if (rawInput.phone_lookup_found !== undefined) session.phone_lookup_found = rawInput.phone_lookup_found;
   }
 
@@ -1948,6 +2081,11 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
       session.check_birthday_result = input.check_birthday_result ?? 'not_called';
       if (input.check_birthday_result !== 'not_called') {
         session.attempts.birthday_check_attempts += 1;
+      }
+      if (input.check_birthday_result === 'failed') {
+        recordBirthdayCheckFailed(session, input.birthday_customer);
+      } else if (input.check_birthday_result === 'success') {
+        session.birthday_at_last_failed_check = null;
       }
     }
     if (rawInput.check_birthday_error) session.check_birthday_error = rawInput.check_birthday_error;
@@ -2049,6 +2187,7 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
   }
 
   if (input.check_birthday_result === 'failed') {
+    recordBirthdayCheckFailed(session, input.birthday_customer);
     const correctedBirthdayArgs = tryApplyBirthdayCorrectionAfterFailedCheck({
       latestText,
       birthdayMerge,
@@ -2123,7 +2262,7 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
 export function runVerificationAddressBrain(rawInput: VerificationAddressBrainInput): VerificationMethodBrainResult {
   const session = getSessionState(rawInput.session_id);
   if (session) {
-    session.active_verification_path = 'address';
+    ensureVerificationPath(session, 'address');
     if (rawInput.phone_lookup_found !== undefined) session.phone_lookup_found = rawInput.phone_lookup_found;
   }
 
@@ -2198,6 +2337,9 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
   const birthdayMerge =
     parsedFromLatest.birthdayMerge ??
     mergeBirthday(baseBirthday, undefined, session?.pending_birthday_day, session?.pending_birthday_month);
+
+  const confirmSpeechBirthday =
+    awaitingField === 'confirm_address' && latestText ? parseBirthday(latestText) : null;
 
   const lookupAfterCorrection = addressCorrections.corrected ? 'not_called' : baseLookupResult;
 
@@ -2323,7 +2465,7 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
         'plz'
       );
     }
-    if (utteranceIsAddressMethodChoice(latestText) && utteranceMentionsPostalCodeMethod(latestText)) {
+    if (utteranceMentionsPostalCodeMethod(latestText)) {
       return finalize(
         makeResult('address', {
           ok: true,
@@ -2332,6 +2474,35 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
           reason: 'Customer chose address verification via postal code; PLZ collection should start now.',
           missing_fields: ['plz'],
           safety_flags: ['address_method_choice'],
+          awaiting_field: 'plz',
+        }),
+        'plz'
+      );
+    }
+    if (utteranceMentionsInsuranceMethod(latestText)) {
+      return finalize(
+        makeResult('address', {
+          ok: true,
+          next_action: 'ASK_VNR',
+          say: 'Gerne über die Versicherungsnummer. Bitte nennen Sie mir Ihre Versicherungsnummer.',
+          reason:
+            'Customer chose VNR while the address brain was active; Leaping should route the next customer turn to pmb_verification_vnr_brain.',
+          missing_fields: ['vnr'],
+          safety_flags: ['method_switch_to_vnr', 'address_method_choice'],
+          awaiting_field: null,
+        }),
+        null
+      );
+    }
+    if (utteranceIsStaleRouterMethodPrompt(latestText)) {
+      return finalize(
+        makeResult('address', {
+          ok: true,
+          next_action: 'ASK_PLZ',
+          say: 'Bitte nennen Sie mir Ihre fünfstellige Postleitzahl.',
+          reason: 'Router method-choice prompt echoed as customer input; ask for PLZ without treating it as a failed parse.',
+          missing_fields: ['plz'],
+          safety_flags: ['plz_router_prompt_echo'],
           awaiting_field: 'plz',
         }),
         'plz'
@@ -2416,15 +2587,51 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
     );
   }
 
-  if (birthdayMerge.parse.status === 'incomplete_year') {
+  if (awaitingField === 'confirm_address' && addressCorrections.birthdayUnclear) {
     return finalize(
       makeResult('address', {
         ok: true,
         next_action: 'ASK_BIRTH_YEAR',
-        say: 'Bitte nennen Sie mir noch das Geburtsjahr vollständig.',
+        say: 'Ich habe das Geburtsjahr bei der Korrektur nicht eindeutig verstanden. Bitte nennen Sie mir nur das Geburtsjahr noch einmal vollständig, zum Beispiel neunzehnhundertsechsundfünfzig.',
+        reason: 'Birthday correction was ambiguous, so only the birth year should be re-collected.',
+        missing_fields: ['birth_year'],
+        safety_flags: ['birthday_correction_unclear', 'never_call_check_birthday_in_address_path'],
+        awaiting_field: 'birthday_customer',
+      }),
+      'birthday_customer'
+    );
+  }
+
+  if (confirmSpeechBirthday?.status === 'incomplete_year') {
+    return finalize(
+      makeResult('address', {
+        ok: true,
+        next_action: 'ASK_BIRTH_YEAR',
+        say: 'Ich habe Tag und Monat verstanden. Bitte nennen Sie mir noch das Geburtsjahr vollständig.',
+        reason: 'Partial birthday on confirm step must not proceed to lookup until the year is complete.',
+        missing_fields: ['birth_year'],
+        safety_flags: ['birthday_incomplete_on_confirm', 'never_call_check_birthday_in_address_path'],
+        awaiting_field: 'birthday_customer',
+      }),
+      'birthday_customer'
+    );
+  }
+
+  if (birthdayMerge.parse.status === 'incomplete_year') {
+    const onConfirm = awaitingField === 'confirm_address';
+    return finalize(
+      makeResult('address', {
+        ok: true,
+        next_action: 'ASK_BIRTH_YEAR',
+        say: onConfirm
+          ? 'Ich habe Tag und Monat verstanden. Bitte nennen Sie mir noch das Geburtsjahr vollständig.'
+          : 'Bitte nennen Sie mir noch das Geburtsjahr vollständig.',
         reason: birthdayMerge.parse.reason ?? 'Birthday was only partially provided.',
         missing_fields: ['birth_year'],
-        safety_flags: ['never_call_check_birthday_in_address_path'],
+        safety_flags: [
+          'never_call_check_birthday_in_address_path',
+          ...(onConfirm ? ['birthday_incomplete_on_confirm'] : []),
+        ],
         awaiting_field: 'birthday_customer',
       }),
       'birthday_customer'
@@ -2464,18 +2671,25 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
     );
   }
 
-  if (awaitingField === 'confirm_address' && addressCorrections.birthdayUnclear) {
+  if (awaitingField === 'confirm_address' && utteranceAsksWhatBirthdayWasStored(latestText)) {
+    const echo = hasCompleteIsoBirthday(input.birthday_customer)
+      ? formatBirthdayIsoForCustomerEcho(input.birthday_customer!)
+      : session?.pending_birthday_day && session?.pending_birthday_month
+        ? `den ${session.pending_birthday_day}. ${session.pending_birthday_month}. Monat, aber noch ohne Jahr`
+        : 'noch kein vollständiges Geburtsdatum';
     return finalize(
       makeResult('address', {
         ok: true,
-        next_action: 'ASK_BIRTH_YEAR',
-        say: 'Ich habe das Geburtsjahr bei der Korrektur nicht eindeutig verstanden. Bitte nennen Sie mir nur das Geburtsjahr noch einmal vollständig, zum Beispiel neunzehnhundertsechsundfünfzig.',
-        reason: 'Birthday correction was ambiguous, so only the birth year should be re-collected.',
-        missing_fields: ['birth_year'],
-        safety_flags: ['birthday_correction_unclear', 'never_call_check_birthday_in_address_path'],
-        awaiting_field: 'birthday_customer',
+        next_action: 'CONFIRM_ADDRESS_VALUES',
+        say: hasCompleteIsoBirthday(input.birthday_customer)
+          ? `Ich habe als Geburtsdatum ${echo} gespeichert. Bitte bestätigen oder korrigieren Sie die Angaben kurz.`
+          : `Ich habe als Geburtsdatum bisher nur ${echo}. Bitte nennen Sie das Geburtsjahr noch vollständig.`,
+        reason: 'Customer asked which birthday was stored during address confirmation.',
+        missing_fields: hasCompleteIsoBirthday(input.birthday_customer) ? [] : ['birth_year'],
+        safety_flags: ['birthday_echo_on_request', 'never_call_check_birthday_in_address_path'],
+        awaiting_field: hasCompleteIsoBirthday(input.birthday_customer) ? 'confirm_address' : 'birthday_customer',
       }),
-      'birthday_customer'
+      hasCompleteIsoBirthday(input.birthday_customer) ? 'confirm_address' : 'birthday_customer'
     );
   }
 
@@ -2527,6 +2741,20 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
     }
 
     if (isYesLike(latestText)) {
+      if (!hasCompleteIsoBirthday(input.birthday_customer)) {
+        return finalize(
+          makeResult('address', {
+            ok: true,
+            next_action: 'ASK_BIRTH_YEAR',
+            say: 'Bevor ich es erneut prüfe, brauche ich noch Ihr vollständiges Geburtsjahr.',
+            reason: 'Customer confirmed address values but the stored birthday is missing a complete year.',
+            missing_fields: ['birth_year'],
+            safety_flags: ['birthday_incomplete_on_confirm', 'never_call_check_birthday_in_address_path'],
+            awaiting_field: 'birthday_customer',
+          }),
+          'birthday_customer'
+        );
+      }
       return finalize(
         makeResult('address', {
           ok: true,
@@ -2619,7 +2847,7 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
 export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): VerificationMethodBrainResult {
   const session = getSessionState(rawInput.session_id);
   if (session) {
-    session.active_verification_path = 'vnr';
+    ensureVerificationPath(session, 'vnr');
   }
   const extraSafetyFlags: string[] = [];
   const latestText = resolveVnrCustomerSpeechInput(rawInput, extraSafetyFlags, session);
@@ -2743,6 +2971,11 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
       session.check_birthday_result = input.check_birthday_result ?? 'not_called';
       if (input.check_birthday_result !== 'not_called') {
         session.attempts.birthday_check_attempts += 1;
+      }
+      if (input.check_birthday_result === 'failed') {
+        recordBirthdayCheckFailed(session, input.birthday_customer);
+      } else if (input.check_birthday_result === 'success') {
+        session.birthday_at_last_failed_check = null;
       }
     }
     if (rawInput.check_birthday_error) session.check_birthday_error = rawInput.check_birthday_error;
@@ -2994,6 +3227,7 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
     session?.get_customer_by_insurance_number_result === 'found';
 
   if (lookupFoundForBirthdayAuth && input.check_birthday_result === 'failed') {
+    recordBirthdayCheckFailed(session, input.birthday_customer);
     const correctedBirthdayArgs = tryApplyBirthdayCorrectionAfterFailedCheck({
       latestText,
       birthdayMerge,
@@ -3103,6 +3337,7 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
   }
 
   if (input.check_birthday_result === 'failed') {
+    recordBirthdayCheckFailed(session, input.birthday_customer);
     const correctedBirthdayArgs = tryApplyBirthdayCorrectionAfterFailedCheck({
       latestText,
       birthdayMerge,
