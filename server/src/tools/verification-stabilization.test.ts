@@ -32,6 +32,23 @@ test('stabilization: id_phone coerces to phone_lookup_found=true', () => {
   assert.equal(coerced.phone_lookup_found, true);
 });
 
+test('stabilization: id_phone as conversation hex does not infer phone found', () => {
+  const sessionHex = 'a1b2c3d4e5f6789012345678abcdef01';
+  const coerced = coerceVerificationPhoneBrainInput({
+    session_id: sessionHex,
+    id_phone: sessionHex,
+  });
+  assert.notEqual(coerced.phone_lookup_found, true);
+});
+
+test('stabilization: explicit phone_lookup_found still works', () => {
+  const coerced = coerceVerificationPhoneBrainInput({
+    session_id: 'a1b2c3d4e5f6789012345678abcdef01',
+    phone_lookup_found: true,
+  });
+  assert.equal(coerced.phone_lookup_found, true);
+});
+
 test('stabilization: VNR after confirmation requests native format check', () => {
   const result = runVerificationVnrBrain({
     session_id: 'vnr-format',

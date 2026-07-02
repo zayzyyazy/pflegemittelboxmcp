@@ -23,8 +23,42 @@ export function asCustomerId(value: unknown): string | undefined {
   return trimmed;
 }
 
+/** 32-char hex — often leaping_conversation_id_hex or call id wrongly bound as id_phone. */
+export function looksLikeLeapingConversationHex(value: string): boolean {
+  return /^[0-9a-f]{32}$/i.test(value);
+}
+
+/**
+ * id_phone is only a reliable customer id when numeric (e.g. 107484).
+ * Leaping field extractions sometimes bind id_phone → $.id from the call object (same as session).
+ */
+export function isReliablePhoneCustomerId(value: string, sessionId?: string): boolean {
+  if (sessionId && value === sessionId) return false;
+  if (looksLikeLeapingConversationHex(value)) return false;
+  return /^\d{1,12}$/.test(value);
+}
+
+function phoneLookupResultIndicatesFound(value: unknown): boolean {
+  if (value === undefined || value === null) return false;
+  if (isLeapingNotFoundText(value)) return false;
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    if ('id' in record || 'customer_id' in record) return true;
+    return false;
+  }
+  const coerced = coercePhoneLookupFound(value);
+  if (coerced === true) return true;
+  const text = String(value).trim().toLowerCase();
+  if (text === 'found' || text === 'true') return true;
+  const asId = asCustomerId(value);
+  return Boolean(asId && isReliablePhoneCustomerId(asId));
+}
+
 /**
  * Infer phone lookup success from fields Leaping binds after get_customer_by_phone.
+ *
+ * Prefer explicit phone_lookup_found or get_customer_by_phone_result.
+ * Do NOT treat id_phone alone as phone-found when it looks like a call/conversation id.
  */
 export function inferPhoneLookupFoundFromLeapingInput(
   input: Record<string, unknown>
@@ -36,24 +70,22 @@ export function inferPhoneLookupFoundFromLeapingInput(
   if (fromFlag === true) return true;
   if (fromFlag === false) return false;
 
+  if (phoneLookupResultIndicatesFound(input.get_customer_by_phone_result)) {
+    return true;
+  }
+
+  const sessionId = asString(input.session_id);
   const idPhone = asCustomerId(input.id_phone);
-  if (idPhone) return true;
+  if (idPhone && isReliablePhoneCustomerId(idPhone, sessionId)) {
+    return true;
+  }
 
   const id = asCustomerId(input.id);
   if (
     id &&
-    (input.id_phone !== undefined ||
-      input.get_customer_by_phone_result !== undefined ||
-      input.phone_lookup_found !== undefined)
-  ) {
-    return true;
-  }
-
-  if (
-    id &&
-    input.get_customer_by_insurance_number_result === undefined &&
-    input.vnr_candidate === undefined &&
-    input.vnr_confirmed === undefined
+    isReliablePhoneCustomerId(id, sessionId) &&
+    input.get_customer_by_phone_result !== undefined &&
+    phoneLookupResultIndicatesFound(input.get_customer_by_phone_result)
   ) {
     return true;
   }

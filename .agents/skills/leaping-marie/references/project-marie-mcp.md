@@ -13,8 +13,22 @@ This file is **not** from Leaping PDFs. It documents how **this repo** connects 
 | MCP argument | Leaping binding |
 |---|---|
 | `session_id` | `leaping_conversation_id_hex` |
+| `phone_lookup_found` | **Explicit** result of `get_customer_by_phone` (recommended) |
+| `get_customer_by_phone_result` | Native function output JSON (best for inference) |
 | `latest_customer_input` | customer answer to **current verification question only** |
-| `id_phone` / `phone_lookup_found` | after `get_customer_by_phone` |
+
+### Do NOT use `id_phone` for phone-found detection (common Leaping misconfiguration)
+
+Many Marie clones bind `id_phone` → `$.id` on a **call** object (same value as conversation/call id). That is **not** the CRM customer id from `get_customer_by_phone`.
+
+| Binding | Reliable for phone-found? |
+|---------|---------------------------|
+| `phone_lookup_found` = true/false from lookup | ✅ Yes |
+| `get_customer_by_phone_result` from function node | ✅ Yes |
+| `id_phone` = numeric customer id (e.g. `107484`) | ✅ Only if truly from CRM lookup response |
+| `id_phone` = `$.id` (32-char hex / same as session) | ❌ **No** — MCP ignores for routing |
+
+**Leaping fix:** In `get_customer_by_phone` function → Field Extractions, map customer id from the **lookup response** (e.g. `$.id` on that function's output), not from call/session. Or bind `phone_lookup_found` explicitly.
 
 Never use MCP `call_...` IDs as `session_id`.
 

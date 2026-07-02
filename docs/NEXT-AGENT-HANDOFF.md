@@ -92,9 +92,14 @@ get_customer_by_phone
 | MCP argument | Leaping field |
 |--------------|---------------|
 | `session_id` | `leaping_conversation_id_hex` |
+| `phone_lookup_found` | Explicit true/false from `get_customer_by_phone` (**preferred**) |
+| `get_customer_by_phone_result` | Native function output (**best**) |
 | `latest_customer_input` | Customer answer to **current verification question only** |
-| `id_phone` | Customer id from `get_customer_by_phone` |
-| `phone_lookup_found` | Phone lookup result |
+| `id_phone` | CRM customer id only — **not** call `$.id` / conversation hex |
+
+### id_phone misbinding (discovered Jul 2026)
+
+Leaping **Field Extractions** had `id_phone` → `$.id` on the call object (same as session/call id). MCP **no longer** treats 32-char hex `id_phone` as phone-found. Fix in Leaping: bind from `get_customer_by_phone` response, or use `phone_lookup_found`.
 | `check_insurance_number_format_result` | After native format check |
 | `get_customer_by_insurance_number_result` | After native lookup |
 | `get_customer_by_plz_geb_result` | After address lookup |
@@ -224,7 +229,7 @@ Then in Leaping: disconnect/reconnect MCP server.
 
 - Router + debug echo in `mcp-http.ts` tools/list
 - `session_id = leaping_conversation_id_hex`
-- `id_phone` coerces to `phone_lookup_found=true`
+- `id_phone` numeric customer id only — **not** call `$.id` (hex misbind breaks phone routing; MCP fixed)
 - German birthday parsing (STT: “sechzen märz fünfzig”, etc.)
 - Compact VNR `E207064360` → CONFIRM_VNR (not ASK_VNR loop)
 - Native `check_insurance_number_format` in VNR flow
