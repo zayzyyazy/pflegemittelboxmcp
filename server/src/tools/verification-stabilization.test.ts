@@ -431,3 +431,31 @@ test('stabilization: partial PLZ append asks confirmation before storing PLZ', (
   assert.ok(confirm.safety_flags.includes('plz_confirm_candidate'));
   assert.ok(confirm.say?.includes('bestätigen'));
 });
+
+test('stabilization: VNR birthday correction after check_birthday failed retries lookup', () => {
+  const sessionId = 'vnr-bday-correction-after-fail';
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    vnr_candidate: 'E207064360',
+    vnr_confirmed: true,
+    check_insurance_number_format_result: 'valid',
+    get_customer_by_insurance_number_result: 'found',
+  });
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'sechzehnter März neunzehnhundertfünfzig',
+  });
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    check_birthday_result: 'failed',
+  });
+  const corrected = runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'Sechzehnter März neunzehnhundertsechsundfünfzig',
+  });
+  assert.equal(corrected.next_action, 'CALL_CHECK_BIRTHDAY');
+  assert.equal(corrected.function_to_call, 'check_birthday');
+  assert.equal(corrected.stored_values?.birthday_customer, '1956-03-16');
+  assert.deepEqual(corrected.function_arguments, { birthday: '1956-03-16' });
+  assert.ok(corrected.safety_flags.includes('birthday_corrected_after_failed_check'));
+});

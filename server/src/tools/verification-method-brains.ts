@@ -1292,6 +1292,29 @@ function buildCheckBirthdayFunctionArgs(birthday_customer: string) {
   };
 }
 
+function tryApplyBirthdayCorrectionAfterFailedCheck(args: {
+  latestText?: string;
+  birthdayMerge: ReturnType<typeof mergeBirthday>;
+  session: VerificationSessionState | null;
+  input: { birthday_customer?: string; check_birthday_result?: string };
+}): ReturnType<typeof buildCheckBirthdayFunctionArgs> | null {
+  if (
+    !args.latestText ||
+    args.birthdayMerge.parse.status !== 'complete' ||
+    !args.birthdayMerge.value
+  ) {
+    return null;
+  }
+
+  args.input.birthday_customer = args.birthdayMerge.value;
+  args.input.check_birthday_result = 'not_called';
+  if (args.session) {
+    args.session.birthday_customer = args.birthdayMerge.value;
+    args.session.check_birthday_result = 'not_called';
+  }
+  return buildCheckBirthdayFunctionArgs(args.birthdayMerge.value);
+}
+
 function buildInsuranceNumberFunctionArgs(insurance_number: string) {
   return {
     function_arguments: { insurance_number },
@@ -1808,6 +1831,28 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
   }
 
   if (input.check_birthday_result === 'failed') {
+    const correctedBirthdayArgs = tryApplyBirthdayCorrectionAfterFailedCheck({
+      latestText,
+      birthdayMerge,
+      session,
+      input,
+    });
+    if (correctedBirthdayArgs) {
+      const result = makeResult('phone', {
+        ok: true,
+        next_action: 'CALL_CHECK_BIRTHDAY',
+        say: '',
+        reason: 'Customer spoke a new birthday after check_birthday failed; retrying with parsed speech.',
+        missing_fields: [],
+        safety_flags: ['birthday_corrected_after_failed_check'],
+        function_to_call: 'check_birthday',
+        function_arguments: correctedBirthdayArgs.function_arguments,
+        leaping_function_arguments: correctedBirthdayArgs.leaping_function_arguments,
+      });
+      saveSessionState(rawInput.session_id, session ?? emptySessionState());
+      return finalizeGenericBrainResult(result, rawInput.session_id, session);
+    }
+
     if ((input.birthday_check_attempts ?? 0) >= 2 || (input.birthday_request_count ?? 0) >= 2) {
       return finalizeGenericBrainResult(makeResult('phone', {
         ok: false,
@@ -2644,6 +2689,28 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
     session?.get_customer_by_insurance_number_result === 'found';
 
   if (lookupFoundForBirthdayAuth && input.check_birthday_result === 'failed') {
+    const correctedBirthdayArgs = tryApplyBirthdayCorrectionAfterFailedCheck({
+      latestText,
+      birthdayMerge,
+      session,
+      input,
+    });
+    if (correctedBirthdayArgs) {
+      return finalize(
+        makeResult('vnr', {
+          ok: true,
+          next_action: 'CALL_CHECK_BIRTHDAY',
+          say: '',
+          reason: 'Customer spoke a new birthday after check_birthday failed; retrying with parsed speech.',
+          missing_fields: [],
+          safety_flags: ['birthday_corrected_after_failed_check'],
+          function_to_call: 'check_birthday',
+          function_arguments: correctedBirthdayArgs.function_arguments,
+          leaping_function_arguments: correctedBirthdayArgs.leaping_function_arguments,
+        })
+      );
+    }
+
     if ((input.birthday_check_attempts ?? 0) >= 2 || (input.birthday_request_count ?? 0) >= 2) {
       return finalize(makeResult('vnr', {
         ok: false,
@@ -2731,6 +2798,28 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
   }
 
   if (input.check_birthday_result === 'failed') {
+    const correctedBirthdayArgs = tryApplyBirthdayCorrectionAfterFailedCheck({
+      latestText,
+      birthdayMerge,
+      session,
+      input,
+    });
+    if (correctedBirthdayArgs) {
+      return finalize(
+        makeResult('vnr', {
+          ok: true,
+          next_action: 'CALL_CHECK_BIRTHDAY',
+          say: '',
+          reason: 'Customer spoke a new birthday after check_birthday failed; retrying with parsed speech.',
+          missing_fields: [],
+          safety_flags: ['birthday_corrected_after_failed_check'],
+          function_to_call: 'check_birthday',
+          function_arguments: correctedBirthdayArgs.function_arguments,
+          leaping_function_arguments: correctedBirthdayArgs.leaping_function_arguments,
+        })
+      );
+    }
+
     if ((input.birthday_check_attempts ?? 0) >= 2 || (input.birthday_request_count ?? 0) >= 2) {
       return finalize(makeResult('vnr', {
         ok: false,
