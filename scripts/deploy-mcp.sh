@@ -5,8 +5,10 @@ set -euo pipefail
 SERVER_HOST="root@167.233.203.132"
 SERVER_REPO_PATH="/opt/pflegemittelboxmcp"
 SERVER_APP_PATH="/opt/pflegemittelboxmcp/server"
+DEPLOY_BRANCH="cursor/jun30-baseline-stabilization-6983"
 PM2_PROCESS_NAME="pflegemittelbox-mcp"
 HEALTH_URL="https://leapingai-api.pflegemittelbox.de/health"
+EXPECTED_BUILD_ID="stabilization-plz-method-v3"
 
 COMMIT_MESSAGE="${1:-}"
 
@@ -74,7 +76,10 @@ ssh "$SERVER_HOST" "
   set -euo pipefail
   echo '==> Remote: update repository'
   cd '$SERVER_REPO_PATH'
-  git pull
+  git fetch origin '$DEPLOY_BRANCH'
+  git checkout '$DEPLOY_BRANCH'
+  git pull origin '$DEPLOY_BRANCH'
+  echo "==> Remote: on branch \$(git branch --show-current) @ \$(git rev-parse --short HEAD)"
 
   echo '==> Remote: install dependencies'
   cd '$SERVER_APP_PATH'
@@ -86,15 +91,26 @@ ssh "$SERVER_HOST" "
   echo '==> Remote: build'
   npm run build
 
+  echo '==> Remote: verify compiled dist (what PM2 runs)'
+  npm run verify-deploy
+
+  echo '==> Remote: deployment preflight (source simulation)'
+  node --import tsx src/tools/verification-deployment-preflight.ts
+
   echo '==> Remote: restart PM2'
-  pm2 restart '$PM2_PROCESS_NAME'
+  pm2 restart '$PM2_PROCESS_NAME' --update-env
 
   echo '==> Remote: PM2 status'
   pm2 status '$PM2_PROCESS_NAME'
 "
 
 step "Checking public health endpoint"
-curl --fail --silent --show-error "$HEALTH_URL"
+HEALTH_JSON="$(curl --fail --silent --show-error "$HEALTH_URL")"
+printf '%s\n' "$HEALTH_JSON"
+
+if ! printf '%s' "$HEALTH_JSON" | grep -q "$EXPECTED_BUILD_ID"; then
+  die "Health endpoint missing verification_build_id=$EXPECTED_BUILD_ID — live server is still on old code."
+fi
 
 printf '\n'
 step "Deployment finished"

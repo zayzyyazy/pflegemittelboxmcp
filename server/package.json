@@ -6,7 +6,8 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "node --test --import tsx src/**/*.test.ts"
+    "test": "node --test --import tsx src/**/*.test.ts",
+    "verify-deploy": "node scripts/verify-deploy.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.4",

@@ -9,6 +9,7 @@ import { dashboardApiRouter } from './routes/dashboard-api.js';
 import { setSetting } from './db.js';
 import { appConfig } from './config.js';
 import { getPostCallMonitorState, startPostCallMonitor } from './post-call-monitor.js';
+import { MCP_VERIFICATION_BUILD_ID } from './tools/verification-build-info.js';
 import { createMcpAuthMiddleware } from './mcp-auth.js';
 import { createDashboardAuthMiddleware } from './dashboard-auth.js';
 
@@ -48,6 +49,7 @@ app.get('/health', (_req, res) => {
     ok: true,
     service: 'pflegemittelbox-mcp',
     version: '0.1.0',
+    verification_build_id: MCP_VERIFICATION_BUILD_ID,
     env: appConfig.ENV_LABEL,
     node_env: appConfig.NODE_ENV,
     uptime_s: Math.round(process.uptime()),
