@@ -9,6 +9,10 @@ import {
   runPostCallEmailNotifier,
 } from './post-call-email-notifier.js';
 import {
+  coerceDebugEchoSessionOnlyInput,
+  runDebugEchoSessionOnly,
+} from './debug-echo-session.js';
+import {
   coerceVerificationMethodRouterInput,
   runVerificationMethodRouter,
 } from './verification-method-router.js';
@@ -95,6 +99,13 @@ export async function runLeapingMcpTool(
         openaiModel: appConfig.OPENAI_MODEL,
         openaiBaseUrl: appConfig.OPENAI_BASE_URL,
       });
+      logCall(name, input, result, null, Date.now() - start);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+
+    case 'pmb_debug_echo_session_only': {
+      const input = coerceDebugEchoSessionOnlyInput(args);
+      const result = runDebugEchoSessionOnly(input);
       logCall(name, input, result, null, Date.now() - start);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }

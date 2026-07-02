@@ -15,6 +15,10 @@ import {
   runPostCallEmailNotifier,
 } from './tools/post-call-email-notifier.js';
 import {
+  coerceDebugEchoSessionOnlyInput,
+  runDebugEchoSessionOnly,
+} from './tools/debug-echo-session.js';
+import {
   coerceVerificationMethodRouterInput,
   runVerificationMethodRouter,
 } from './tools/verification-method-router.js';
@@ -289,6 +293,30 @@ export function createMcpServer(): McpServer {
         openaiBaseUrl: appConfig.OPENAI_BASE_URL,
       });
       logCall('pmb_post_call_email_notifier', input, result, null, Date.now() - start);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'pmb_debug_echo_session_only',
+    'Clone-only session binding smoke test. Accepts session_id and optional phone lookup fields. ' +
+      'Use after get_customer_by_phone to verify session_id binding without LLM-filled extras.',
+    {
+      session_id: z.string().optional(),
+      id_phone: z
+        .string()
+        .optional()
+        .describe('Customer id from get_customer_by_phone when Leaping binds id_phone.'),
+      phone_lookup_found: z
+        .union([z.boolean(), z.string()])
+        .optional()
+        .describe('Result of get_customer_by_phone or explicit phone-found flag.'),
+    },
+    async (input) => {
+      const start = Date.now();
+      const coerced = coerceDebugEchoSessionOnlyInput(input);
+      const result = runDebugEchoSessionOnly(coerced);
+      logCall('pmb_debug_echo_session_only', coerced, result, null, Date.now() - start);
       return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
     }
   );

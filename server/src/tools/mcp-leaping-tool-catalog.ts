@@ -9,6 +9,7 @@ export const LEAPING_MCP_TOOL_NAMES = [
   'pmb_verification_vnr_brain',
   'pmb_delivery_status_reasoner',
   'pmb_post_call_email_notifier',
+  'pmb_debug_echo_session_only',
 ] as const;
 
 export type LeapingMcpToolName = (typeof LEAPING_MCP_TOOL_NAMES)[number];
@@ -158,6 +159,21 @@ export const LEAPING_MCP_TOOLS: McpToolDefinition[] = [
         detected_events: { type: 'object' },
         to_email: { type: 'string' },
         dry_run: { type: 'boolean' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'pmb_debug_echo_session_only',
+    description:
+      'Clone-only session binding smoke test after get_customer_by_phone. ' +
+      'Verifies session_id binding and optional id_phone without LLM-filled extras.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string', description: 'Stable call session id (leaping_conversation_id_hex).' },
+        id_phone: { type: 'string', description: 'Customer id from get_customer_by_phone.' },
+        phone_lookup_found: { type: 'string', description: 'Phone lookup result or explicit flag.' },
       },
       required: [],
     },
