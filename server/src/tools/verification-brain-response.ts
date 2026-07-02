@@ -1,4 +1,5 @@
 import type { VerificationMethodBrainResult } from './verification-method-brains.js';
+import { MCP_VERIFICATION_BUILD_ID } from './verification-build-info.js';
 
 /**
  * Jun 30 afternoon Leaping contract: core controller fields only.
@@ -19,6 +20,7 @@ export function toLeapingLegacyCoreResponse(
     reason: result.reason,
     missing_fields: result.missing_fields,
     safety_flags: result.safety_flags,
+    mcp_build_id: MCP_VERIFICATION_BUILD_ID,
   };
 
   if (result.function_arguments && Object.keys(result.function_arguments).length > 0) {

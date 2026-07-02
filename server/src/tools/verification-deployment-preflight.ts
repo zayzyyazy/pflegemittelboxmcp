@@ -18,6 +18,7 @@ import {
   runVerificationVnrBrain,
 } from './verification-method-brains.js';
 import { toLeapingLegacyCoreResponse } from './verification-brain-response.js';
+import { MCP_VERIFICATION_BUILD_ID } from './verification-build-info.js';
 
 type Expect = {
   next_action?: string;
@@ -27,6 +28,7 @@ type Expect = {
   allowed_to_transition?: boolean;
   transition_to?: string | null;
   say_contains?: string;
+  safety_flag_contains?: string;
   session_mode?: string;
   inferred_phone_lookup_found?: boolean;
 };
@@ -94,6 +96,14 @@ function assertExpect(step: Step, out: Record<string, unknown>): string[] {
   }
   if (e.say_contains && !String(out.say ?? '').includes(e.say_contains)) {
     errors.push(`say missing "${e.say_contains}" (got: ${JSON.stringify(out.say)})`);
+  }
+  if (e.safety_flag_contains) {
+    const flags = out.safety_flags;
+    if (!Array.isArray(flags) || !flags.includes(e.safety_flag_contains)) {
+      errors.push(
+        `safety_flags missing "${e.safety_flag_contains}" (got: ${JSON.stringify(flags)})`
+      );
+    }
   }
   return errors;
 }
@@ -361,6 +371,63 @@ export const DEPLOYMENT_SCENARIOS: Scenario[] = [
       },
     ],
   },
+  {
+    id: 'E-address-method-fragments',
+    session_id: 'preflight-addr-method-frag',
+    steps: [
+      {
+        label: 'Bare Postleitzahl is method choice',
+        tool: 'pmb_verification_address_brain',
+        input: {
+          session_id: 'preflight-addr-method-frag-bare',
+          latest_customer_input: 'Postleitzahl',
+          phone_lookup_found: false,
+        },
+        expect: {
+          next_action: 'ASK_PLZ',
+          say_contains: 'Gerne über die Postleitzahl',
+          safety_flag_contains: 'address_method_choice',
+        },
+      },
+      {
+        label: 'STT fragment der Postleitzahl is method choice',
+        tool: 'pmb_verification_address_brain',
+        input: {
+          session_id: 'preflight-addr-method-frag-der',
+          latest_customer_input: 'der Postleitzahl',
+          phone_lookup_found: false,
+        },
+        expect: {
+          next_action: 'ASK_PLZ',
+          say_contains: 'Gerne über die Postleitzahl',
+          safety_flag_contains: 'address_method_choice',
+        },
+      },
+      {
+        label: 'Router then address brain with method keyword',
+        tool: 'pmb_verification_method_router',
+        input: {
+          session_id: 'preflight-addr-method-frag-router',
+          latest_customer_input: 'Postleitzahl',
+        },
+        expect: { next_brain: 'pmb_verification_address_brain' },
+      },
+      {
+        label: 'Address brain after router handoff',
+        tool: 'pmb_verification_address_brain',
+        input: {
+          session_id: 'preflight-addr-method-frag-router',
+          latest_customer_input: 'der Postleitzahl',
+          phone_lookup_found: false,
+        },
+        expect: {
+          next_action: 'ASK_PLZ',
+          say_contains: 'Gerne über die Postleitzahl',
+          safety_flag_contains: 'address_method_choice',
+        },
+      },
+    ],
+  },
 ];
 
 function main() {
@@ -368,7 +435,8 @@ function main() {
   let failed = 0;
   const failures: string[] = [];
 
-  console.log('=== Deployment preflight (Leaping JSON simulation) ===\n');
+  console.log('=== Deployment preflight (Leaping JSON simulation) ===');
+  console.log(`Build ID: ${MCP_VERIFICATION_BUILD_ID}\n`);
 
   for (const scenario of DEPLOYMENT_SCENARIOS) {
     console.log(`## ${scenario.id} (session: ${scenario.session_id})`);

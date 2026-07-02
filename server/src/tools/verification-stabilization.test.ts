@@ -498,6 +498,32 @@ test('stabilization: bare PLZ keyword is method choice not failed PLZ parse', ()
   assert.equal(result.attempts?.plz_attempts, 0);
 });
 
+test('stabilization: der Postleitzahl STT fragment recovers from poisoned plz_attempts', () => {
+  const sessionId = 'addr-der-postleitzahl-recover';
+  runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'hmm',
+    phone_lookup_found: false,
+  });
+  const poisoned = runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'hmm',
+    phone_lookup_found: false,
+  });
+  assert.ok((poisoned.attempts?.plz_attempts ?? 0) >= 1);
+  assert.match(poisoned.say ?? '', /leider noch nicht vollständig verstanden/);
+
+  const recovered = runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'der Postleitzahl',
+    phone_lookup_found: false,
+  });
+  assert.equal(recovered.next_action, 'ASK_PLZ');
+  assert.match(recovered.say ?? '', /Gerne über die Postleitzahl/);
+  assert.ok(recovered.safety_flags.includes('address_method_choice'));
+  assert.equal(recovered.attempts?.plz_attempts, 0);
+});
+
 test('stabilization: stale ja while awaiting PLZ prompts again without harsh retry', () => {
   const sessionId = 'addr-stale-ja-plz';
   const result = runVerificationAddressBrain({

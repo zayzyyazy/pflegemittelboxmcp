@@ -481,7 +481,10 @@ function normalizeSpeechCueText(text: string): string {
 
 function utteranceIsBarePostalCodeMethodSelection(normalized: string): boolean {
   const stripped = normalized
-    .replace(/\b(die|der|das|mit|per|bitte|gerne|ja|ok|okay|dann|mal|noch)\b/g, ' ')
+    .replace(
+      /\b(die|der|das|dem|den|mit|per|bitte|gerne|ja|ok|okay|dann|mal|noch|ueber|uber|wa|was|machen|wir|doch|lieber|gern|ein|eine|uns|mir|an|auf|zur|zum|von|fuer|fuers|nur|so|halt|eben)\b/g,
+      ' '
+    )
     .replace(/\s+/g, ' ')
     .trim();
   return stripped === 'postleitzahl' || stripped === 'post leitzahl' || stripped === 'plz';
@@ -2486,6 +2489,11 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
       );
     }
     if (utteranceMentionsPostalCodeMethod(latestText)) {
+      if (session) {
+        session.attempts.plz_attempts = 0;
+        session.pending_plz_digits = null;
+        session.pending_plz_confirm = null;
+      }
       return finalize(
         makeResult('address', {
           ok: true,
