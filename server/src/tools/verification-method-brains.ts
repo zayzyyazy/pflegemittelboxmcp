@@ -1,6 +1,10 @@
 import { inferPhoneLookupFoundFromLeapingInput } from './leaping-field-bindings.js';
 import {
+  applyVnrCorrection,
+  extractVnrDigits,
   extractVnrLeadingLetter,
+  isVnrCorrectionLike,
+  mergePendingVnrParts,
   mergeVnrLetterWithDigits,
   normalizeVnr as normalizeVnrLoose,
 } from './normalize-vnr.js';
@@ -113,6 +117,8 @@ export interface VerificationSessionStoredValues {
 export interface VerificationSessionState extends VerificationSessionStoredValues {
   pending_birthday_day: number | null;
   pending_birthday_month: number | null;
+  pending_vnr_letter: string | null;
+  pending_vnr_digits: string | null;
   awaiting_field: AddressAwaitingField | null;
   attempts: VerificationSessionAttempts;
 }
@@ -333,6 +339,8 @@ function emptySessionState(): VerificationSessionState {
     check_insurance_number_format_result: null,
     pending_birthday_day: null,
     pending_birthday_month: null,
+    pending_vnr_letter: null,
+    pending_vnr_digits: null,
     awaiting_field: null,
     attempts: emptyAttempts(),
   };
@@ -486,6 +494,130 @@ function hasDigitsOnlyVnrCandidate(
   const candidate = rawInput.vnr_candidate ?? rawInput.vnr_raw ?? session?.vnr_candidate ?? undefined;
   if (!candidate) return false;
   return /^[0-9]{9}$/.test(String(candidate).replace(/\s+/g, ''));
+}
+
+interface VnrSpeechResolveResult {
+  candidate?: string;
+  pendingLetter: string | null;
+  pendingDigits: string | null;
+  wasCorrection: boolean;
+  clearNativeResults: boolean;
+}
+
+function resolveVnrFromSessionAndSpeech(
+  session: VerificationSessionState | null,
+  latestText: string | undefined,
+  boundCandidate?: string,
+  sessionCandidate?: string
+): VnrSpeechResolveResult {
+  const emptyPending = {
+    pendingLetter: session?.pending_vnr_letter ?? null,
+    pendingDigits: session?.pending_vnr_digits ?? null,
+    wasCorrection: false,
+    clearNativeResults: false,
+  };
+
+  const existingFull = [boundCandidate, sessionCandidate]
+    .map((value) => normalizeVnr(value))
+    .find((value) => value && /^[A-Z][0-9]{9}$/.test(value));
+
+  if (latestText && existingFull && isVnrCorrectionLike(latestText)) {
+    const corrected = applyVnrCorrection(existingFull, latestText);
+    if (corrected) {
+      return {
+        candidate: corrected,
+        pendingLetter: null,
+        pendingDigits: null,
+        wasCorrection: true,
+        clearNativeResults: true,
+      };
+    }
+  }
+
+  if (!latestText) {
+    return {
+      ...emptyPending,
+      candidate: boundCandidate ?? sessionCandidate ?? undefined,
+    };
+  }
+
+  const latestCandidate = parseCompactVnr(latestText) ?? normalizeVnrLoose(latestText).candidate;
+  if (latestCandidate && /^[A-Z][0-9]{9}$/.test(latestCandidate)) {
+    return {
+      candidate: latestCandidate,
+      pendingLetter: null,
+      pendingDigits: null,
+      wasCorrection: false,
+      clearNativeResults: false,
+    };
+  }
+
+  const pendingLetter = session?.pending_vnr_letter ?? undefined;
+  const pendingDigits = session?.pending_vnr_digits ?? '';
+  const extractedLetter = extractVnrLeadingLetter(latestText);
+  const extractedDigits = extractVnrDigits(latestText);
+
+  const digitsOnlyBase = [boundCandidate, sessionCandidate].find((value) =>
+    value ? /^[0-9]{9}$/.test(String(value).replace(/\s+/g, '')) : false
+  );
+  const letterMergedVnr = mergeVnrLetterWithDigits(digitsOnlyBase, latestText);
+  if (letterMergedVnr) {
+    return {
+      candidate: letterMergedVnr,
+      pendingLetter: null,
+      pendingDigits: null,
+      wasCorrection: false,
+      clearNativeResults: false,
+    };
+  }
+
+  if (extractedLetter && extractedDigits.length === 0) {
+    return {
+      candidate: undefined,
+      pendingLetter: extractedLetter,
+      pendingDigits: '',
+      wasCorrection: false,
+      clearNativeResults: false,
+    };
+  }
+
+  if (pendingLetter && extractedDigits.length > 0) {
+    const merged = mergePendingVnrParts(pendingLetter, pendingDigits, latestText);
+    if (merged.complete && merged.candidate) {
+      return {
+        candidate: merged.candidate,
+        pendingLetter: null,
+        pendingDigits: null,
+        wasCorrection: false,
+        clearNativeResults: false,
+      };
+    }
+    return {
+      candidate: undefined,
+      pendingLetter,
+      pendingDigits: merged.digits,
+      wasCorrection: false,
+      clearNativeResults: false,
+    };
+  }
+
+  if (extractedLetter && extractedDigits.length > 0 && extractedDigits.length < 9) {
+    return {
+      candidate: undefined,
+      pendingLetter: extractedLetter,
+      pendingDigits: extractedDigits,
+      wasCorrection: false,
+      clearNativeResults: false,
+    };
+  }
+
+  return {
+    candidate: boundCandidate ?? sessionCandidate ?? latestCandidate ?? undefined,
+    pendingLetter: emptyPending.pendingLetter,
+    pendingDigits: emptyPending.pendingDigits,
+    wasCorrection: false,
+    clearNativeResults: false,
+  };
 }
 
 function resolveVnrCustomerSpeechInput(
@@ -1903,21 +2035,22 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
     );
   }
 
-  const latestCandidate = latestText
-    ? parseCompactVnr(latestText) ?? normalizeVnrLoose(latestText).candidate
-    : undefined;
   const sessionCandidate = session?.vnr_candidate ?? undefined;
   const boundCandidate = rawInput.vnr_candidate ?? rawInput.vnr_raw ?? undefined;
-  const digitsOnlyBase = [boundCandidate, sessionCandidate].find((value) =>
-    value ? /^[0-9]{9}$/.test(String(value).replace(/\s+/g, '')) : false
+  const vnrResolve = resolveVnrFromSessionAndSpeech(
+    session,
+    latestText,
+    boundCandidate,
+    sessionCandidate
   );
-  const letterMergedVnr = latestText ? mergeVnrLetterWithDigits(digitsOnlyBase, latestText) : undefined;
-  // Fresh valid parse from this turn beats stale session (e.g. digits-only poison from lowercase STT).
-  const resolvedVnr = normalizeVnr(
-    latestCandidate && /^[A-Z][0-9]{9}$/.test(latestCandidate)
-      ? latestCandidate
-      : letterMergedVnr ??
-          (boundCandidate ?? sessionCandidate ?? latestCandidate ?? undefined)
+  const resolvedVnr = normalizeVnr(vnrResolve.candidate);
+  const previousVnr = normalizeVnr(sessionCandidate);
+  const candidateChanged = Boolean(
+    latestText &&
+      resolvedVnr &&
+      previousVnr &&
+      resolvedVnr !== previousVnr &&
+      /^[A-Z][0-9]{9}$/.test(resolvedVnr)
   );
   const birthdayMerge = mergeBirthday(
     rawInput.birthday_customer ?? session?.birthday_customer ?? undefined,
@@ -1930,21 +2063,30 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
     vnr_raw: resolvedVnr,
     vnr_candidate: resolvedVnr,
     vnr_confirmed:
-      rawInput.vnr_confirmed === true ||
-      ((rawInput.vnr_candidate !== undefined || session?.vnr_candidate !== null) &&
-        isYesLike(latestText) &&
-        !extractVnrLeadingLetter(latestText ?? ''))
-        ? true
-        : rawInput.vnr_confirmed ?? session?.vnr_confirmed ?? undefined,
+      vnrResolve.wasCorrection || candidateChanged
+        ? false
+        : rawInput.vnr_confirmed === true ||
+            ((rawInput.vnr_candidate !== undefined || session?.vnr_candidate !== null) &&
+              isYesLike(latestText) &&
+              !extractVnrLeadingLetter(latestText ?? '') &&
+              !isVnrCorrectionLike(latestText ?? ''))
+          ? true
+          : rawInput.vnr_confirmed ?? session?.vnr_confirmed ?? undefined,
     birthday_customer: birthdayMerge.value,
-    check_insurance_number_format_result: mergeNormalizedFormatResult(
-      rawInput.check_insurance_number_format_result,
-      session?.check_insurance_number_format_result
-    ),
-    get_customer_by_insurance_number_result: mergeNormalizedLookupResult(
-      rawInput.get_customer_by_insurance_number_result,
-      session?.get_customer_by_insurance_number_result
-    ),
+    check_insurance_number_format_result:
+      vnrResolve.clearNativeResults || candidateChanged
+      ? 'not_called'
+      : mergeNormalizedFormatResult(
+          rawInput.check_insurance_number_format_result,
+          session?.check_insurance_number_format_result
+        ),
+    get_customer_by_insurance_number_result:
+      vnrResolve.clearNativeResults || candidateChanged
+      ? 'not_called'
+      : mergeNormalizedLookupResult(
+          rawInput.get_customer_by_insurance_number_result,
+          session?.get_customer_by_insurance_number_result
+        ),
     check_birthday_result: mergeNormalizedCheckBirthdayResult(
       rawInput.check_birthday_result,
       session?.check_birthday_result
@@ -1966,7 +2108,15 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
 
   if (session) {
     if (input.vnr_candidate) session.vnr_candidate = input.vnr_candidate;
+    else if (vnrResolve.pendingLetter) session.vnr_candidate = null;
     if (input.vnr_confirmed !== undefined) session.vnr_confirmed = input.vnr_confirmed;
+    session.pending_vnr_letter = vnrResolve.pendingLetter;
+    session.pending_vnr_digits = vnrResolve.pendingDigits;
+    if (vnrResolve.clearNativeResults || candidateChanged) {
+      session.check_insurance_number_format_result = 'not_called';
+      session.get_customer_by_insurance_number_result = 'not_called';
+      if (candidateChanged) session.vnr_confirmed = false;
+    }
     if (birthdayMerge.value) session.birthday_customer = birthdayMerge.value;
     if (birthdayMerge.parse.status === 'complete') {
       session.pending_birthday_day = null;
@@ -2017,6 +2167,23 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
   }
 
   if (!input.vnr_candidate) {
+    if (session?.pending_vnr_letter) {
+      const partial = session.pending_vnr_digits ?? '';
+      const missing = Math.max(0, 9 - partial.length);
+      const say =
+        missing === 9
+          ? `Ich habe den Buchstaben ${session.pending_vnr_letter} verstanden. Bitte nennen Sie jetzt die neun Ziffern Ihrer Versicherungsnummer.`
+          : `Ich habe bisher ${session.pending_vnr_letter} und ${partial.length} Ziffern. Bitte nennen Sie die restlichen ${missing} Ziffern.`;
+      return finalize(makeResult('vnr', {
+        ok: true,
+        next_action: 'ASK_VNR_DIGITS',
+        say,
+        reason: 'Leading letter captured; waiting for remaining spoken digits across turns.',
+        missing_fields: ['vnr_digits'],
+        safety_flags: ['vnr_pending_letter'],
+      }));
+    }
+
     if ((input.vnr_request_count ?? 0) >= 2) {
       return finalize(makeResult('vnr', {
         ok: false,
@@ -2064,13 +2231,16 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
   }
 
   if (input.vnr_confirmed !== true) {
+    const safetyFlags = vnrResolve.wasCorrection ? ['vnr_corrected'] : [];
     const result = makeResult('vnr', {
       ok: true,
       next_action: 'CONFIRM_VNR',
       say: `Ich habe ${input.vnr_candidate} verstanden. Ist das korrekt?`,
-      reason: 'VNR must be confirmed before format validation or lookup.',
+      reason: vnrResolve.wasCorrection
+        ? 'VNR was corrected from customer speech and must be confirmed again.'
+        : 'VNR must be confirmed before format validation or lookup.',
       missing_fields: [],
-      safety_flags: [],
+      safety_flags: safetyFlags,
     });
     return finalize(result);
   }
@@ -2162,6 +2332,12 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
       missing_fields: ['vnr'],
       safety_flags: ['vnr_lookup_retry'],
     });
+    if (session) {
+      session.vnr_candidate = null;
+      session.vnr_confirmed = null;
+      session.pending_vnr_letter = null;
+      session.pending_vnr_digits = null;
+    }
     return finalize(result);
   }
 

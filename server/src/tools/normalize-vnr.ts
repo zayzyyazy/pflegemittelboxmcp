@@ -29,6 +29,25 @@ const PHONETIC_WORD_TO_LETTER: Record<string, string> = {
   zeppelin: 'Z',
 };
 
+const WORD_TO_DIGIT: Record<string, string> = {
+  null: '0',
+  nul: '0',
+  eins: '1',
+  ein: '1',
+  eine: '1',
+  zwei: '2',
+  zwo: '2',
+  drei: '3',
+  vier: '4',
+  fünf: '5',
+  fuenf: '5',
+  funf: '5',
+  sechs: '6',
+  sieben: '7',
+  acht: '8',
+  neun: '9',
+};
+
 function normalizePhoneticToken(token: string): string {
   return token
     .toLowerCase()
@@ -68,10 +87,118 @@ export function extractVnrLeadingLetter(text: string): string | undefined {
     return tokens[0].toUpperCase();
   }
 
-  const bareMatch = trimmed.match(/\b([A-Z])\b/);
-  if (bareMatch) return bareMatch[1];
+  if (!hasSpokenVnrDigits(lower)) {
+    for (let i = tokens.length - 1; i >= 0; i--) {
+      if (/^[a-z]$/.test(tokens[i])) {
+        return tokens[i].toUpperCase();
+      }
+    }
+  }
+
+  if (/^[A-Za-z]$/.test(trimmed)) {
+    return trimmed.toUpperCase();
+  }
 
   return undefined;
+}
+
+function hasSpokenVnrDigits(text: string): boolean {
+  const tokens = text.toLowerCase().split(/[\s,.\-/]+/).filter(Boolean);
+  return tokens.some((token) => WORD_TO_DIGIT[token] !== undefined || /^\d+$/.test(token));
+}
+
+function stripLeadingLetterForDigits(text: string): string {
+  const lower = text.toLowerCase();
+  if (/\b[a-z][,\s]+wie\s+[\w-]+/.test(lower)) {
+    return lower.replace(/\b[a-z][,\s]+wie\s+[\w-]+/, ' ');
+  }
+  const letter = extractVnrLeadingLetter(text);
+  if (!letter) return lower;
+  for (const rawToken of lower.split(/[\s,.\-/]+/).filter(Boolean)) {
+    const token = normalizePhoneticToken(rawToken);
+    if (PHONETIC_WORD_TO_LETTER[token] === letter) {
+      return lower.replace(new RegExp(`\\b${rawToken.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`), ' ');
+    }
+  }
+  return lower.replace(new RegExp(`\\b${letter.toLowerCase()}\\b`), ' ');
+}
+
+/** Extract only the digit run from spoken VNR text (no leading letter). */
+export function extractVnrDigits(text: string): string {
+  const tokens = stripLeadingLetterForDigits(text).split(/[\s,.\-/]+/).filter(Boolean);
+  let digits = '';
+  for (const token of tokens) {
+    if (WORD_TO_DIGIT[token] !== undefined) {
+      digits += WORD_TO_DIGIT[token];
+    } else if (/^\d+$/.test(token)) {
+      digits += token;
+    }
+  }
+  return digits;
+}
+
+const VNR_CORRECTION_PHRASES = [
+  'am anfang',
+  'vorne',
+  'zu beginn',
+  'anfang',
+  'korrigier',
+  'nicht ',
+  'sondern',
+  'falsch',
+  'eigentlich',
+  'gemeint',
+  'also am',
+  'doch ',
+];
+
+export function isVnrCorrectionLike(text: string | undefined): boolean {
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  return VNR_CORRECTION_PHRASES.some((phrase) => lower.includes(phrase)) && extractVnrDigits(text).length > 0;
+}
+
+/** Patch an existing full VNR using a spoken correction fragment. */
+export function applyVnrCorrection(existingVnr: string, correctionText: string): string | undefined {
+  const compact = existingVnr.replace(/\s+/g, '').toUpperCase();
+  const match = compact.match(/^([A-Z])(\d{9})$/);
+  if (!match) return undefined;
+  const letter = match[1];
+  const digits = match[2];
+  const patch = extractVnrDigits(correctionText);
+  if (!patch) return undefined;
+  const lower = correctionText.toLowerCase();
+
+  let newDigits = digits;
+  if (/\b(am anfang|vorne|zu beginn|anfang)\b/.test(lower)) {
+    newDigits = patch.length >= 9 ? patch.slice(0, 9) : patch + digits.slice(patch.length);
+  } else if (/\b(am ende|hinten)\b/.test(lower)) {
+    newDigits = patch.length >= 9 ? patch.slice(0, 9) : digits.slice(0, 9 - patch.length) + patch;
+  } else if (patch.length === 9) {
+    newDigits = patch;
+  } else if (patch.length > 0) {
+    newDigits = patch + digits.slice(patch.length);
+  } else {
+    return undefined;
+  }
+
+  if (!/^\d{9}$/.test(newDigits)) return undefined;
+  const corrected = letter + newDigits;
+  return corrected === compact ? undefined : corrected;
+}
+
+export function mergePendingVnrParts(
+  letter: string,
+  existingDigits: string,
+  newDigitText: string
+): { digits: string; complete: boolean; candidate?: string } {
+  const combined = (existingDigits + extractVnrDigits(newDigitText)).slice(0, 9);
+  const complete = combined.length === 9;
+  return {
+    digits: combined,
+    complete,
+    candidate: complete ? letter.toUpperCase() + combined : undefined,
+  };
 }
 
 /** Merge a spoken letter with nine session digits into a full VNR candidate. */
@@ -86,26 +213,6 @@ export function mergeVnrLetterWithDigits(
   if (!letter) return undefined;
   return letter + digits;
 }
-
-// Mapping of German spoken number words → single digit character
-const WORD_TO_DIGIT: Record<string, string> = {
-  null: '0',
-  nul: '0',
-  eins: '1',
-  ein: '1',
-  eine: '1',
-  zwei: '2',
-  zwo: '2',
-  drei: '3',
-  vier: '4',
-  fünf: '5',
-  fuenf: '5',
-  funf: '5',
-  sechs: '6',
-  sieben: '7',
-  acht: '8',
-  neun: '9',
-};
 
 export interface NormalizeVnrResult {
   candidate: string;

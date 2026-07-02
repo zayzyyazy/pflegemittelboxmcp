@@ -262,3 +262,63 @@ test('stabilization: stale ja on ASK_VNR_LETTER re-prompts without treating as l
   assert.ok(result.safety_flags.includes('latest_customer_input_ignored_stale_confirmation'));
   assert.ok(result.missing_fields.includes('vnr_letter'));
 });
+
+test('stabilization: letter in prior turn then digits in next turn', () => {
+  const sessionId = 'vnr-split-turn-letter-first';
+  const first = runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'Das ist einmal e.',
+  });
+  assert.equal(first.next_action, 'ASK_VNR_DIGITS');
+  assert.match(first.say, /Buchstaben E/);
+
+  const second = runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'drei null sieben null sechs vier drei sechs null',
+  });
+  assert.equal(second.next_action, 'CONFIRM_VNR');
+  assert.match(second.say, /E307064360/);
+});
+
+test('stabilization: correction during confirm updates VNR prefix', () => {
+  const sessionId = 'vnr-correction-prefix';
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'e drei null sieben null sechs vier drei sechs null',
+  });
+  const corrected = runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'Ja, also am Anfang ist das zwei null sieben.',
+  });
+  assert.equal(corrected.next_action, 'CONFIRM_VNR');
+  assert.match(corrected.say, /E207064360/);
+  assert.equal(corrected.stored_values?.vnr_confirmed, false);
+});
+
+test('stabilization: partial digits accumulate across turns after lookup retry', () => {
+  const sessionId = 'vnr-partial-digit-accum';
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    vnr_candidate: 'E307064360',
+    vnr_confirmed: true,
+    check_insurance_number_format_result: 'valid',
+    get_customer_by_insurance_number_result: 'not_found',
+  });
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'e wie Emil',
+  });
+  const partial = runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'zwei null sieben sechs vier drei sechs neun',
+  });
+  assert.equal(partial.next_action, 'ASK_VNR_DIGITS');
+  assert.match(partial.say, /restlichen 1 Ziffer/);
+
+  const complete = runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'null',
+  });
+  assert.equal(complete.next_action, 'CONFIRM_VNR');
+  assert.match(complete.say, /E207643690/);
+});
