@@ -479,16 +479,36 @@ function normalizeSpeechCueText(text: string): string {
     .replace(/ß/g, 'ss');
 }
 
+function utteranceIsBarePostalCodeMethodSelection(normalized: string): boolean {
+  const stripped = normalized
+    .replace(/\b(die|der|das|mit|per|bitte|gerne|ja|ok|okay|dann|mal|noch)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return stripped === 'postleitzahl' || stripped === 'post leitzahl' || stripped === 'plz';
+}
+
 function utteranceMentionsPostalCodeMethod(text: string | undefined): boolean {
   if (!text) return false;
   const normalized = normalizeSpeechCueText(text);
+  if (parsePlz(text)) return false;
+  if (extractDigitRuns(text).some((run) => run.length > 0)) return false;
   const mentionsPlz =
     normalized.includes('postleitzahl') ||
     normalized.includes('post leitzahl') ||
     /\bplz\b/.test(normalized);
   if (!mentionsPlz) return false;
+  if (
+    normalized.includes('stimmt nicht') ||
+    normalized.includes('falsch') ||
+    normalized.includes('nicht richtig') ||
+    normalized.includes('war falsch')
+  ) {
+    return false;
+  }
+  if (utteranceIsBarePostalCodeMethodSelection(normalized)) return true;
   return (
     normalized.includes('ueber die postleitzahl') ||
+    normalized.includes('das ueber die postleitzahl') ||
     normalized.includes('ueber postleitzahl') ||
     normalized.includes('mit der postleitzahl') ||
     normalized.includes('mit postleitzahl') ||

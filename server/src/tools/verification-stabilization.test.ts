@@ -473,6 +473,31 @@ test('stabilization: address method choice does not count as failed PLZ parse', 
   assert.equal(result.attempts?.plz_attempts, 0);
 });
 
+test('stabilization: bare Postleitzahl keyword is method choice not failed PLZ parse', () => {
+  const result = runVerificationAddressBrain({
+    session_id: 'addr-bare-postleitzahl',
+    latest_customer_input: 'Postleitzahl',
+    phone_lookup_found: false,
+  });
+  assert.equal(result.next_action, 'ASK_PLZ');
+  assert.match(result.say ?? '', /Gerne über die Postleitzahl/);
+  assert.ok(result.safety_flags.includes('address_method_choice'));
+  assert.equal(result.attempts?.plz_attempts, 0);
+  assert.ok(!result.safety_flags.includes('plz_parse_retry'));
+});
+
+test('stabilization: bare PLZ keyword is method choice not failed PLZ parse', () => {
+  const result = runVerificationAddressBrain({
+    session_id: 'addr-bare-plz',
+    latest_customer_input: 'PLZ',
+    phone_lookup_found: false,
+  });
+  assert.equal(result.next_action, 'ASK_PLZ');
+  assert.match(result.say ?? '', /Gerne über die Postleitzahl/);
+  assert.ok(result.safety_flags.includes('address_method_choice'));
+  assert.equal(result.attempts?.plz_attempts, 0);
+});
+
 test('stabilization: stale ja while awaiting PLZ prompts again without harsh retry', () => {
   const sessionId = 'addr-stale-ja-plz';
   const result = runVerificationAddressBrain({
