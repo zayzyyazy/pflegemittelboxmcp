@@ -894,6 +894,28 @@ function parseBirthday(rawText: string | undefined): BirthdayParseResult {
 
   const normalizedText = preprocessBirthdaySpeech(rawText);
 
+  const isoYmdMatch = normalizedText.match(/^\s*(\d{4})-(\d{2})-(\d{2})\s*$/);
+  if (isoYmdMatch) {
+    const year = Number(isoYmdMatch[1]);
+    const month = Number(isoYmdMatch[2]);
+    const day = Number(isoYmdMatch[3]);
+    const iso = toIsoDate(day, month, year);
+    return iso
+      ? { status: 'complete', iso, day, month, year }
+      : { status: 'impossible', iso: null, reason: 'Birthday ISO date was impossible or in the future.' };
+  }
+
+  const dmyFourDigitYearMatch = normalizedText.match(/^\s*(\d{1,2})[./](\d{1,2})[./](\d{4})\s*$/);
+  if (dmyFourDigitYearMatch) {
+    const day = Number(dmyFourDigitYearMatch[1]);
+    const month = Number(dmyFourDigitYearMatch[2]);
+    const year = Number(dmyFourDigitYearMatch[3]);
+    const iso = toIsoDate(day, month, year);
+    return iso
+      ? { status: 'complete', iso, day, month, year }
+      : { status: 'impossible', iso: null, reason: 'Birthday looked numeric but was impossible or in the future.' };
+  }
+
   const numericMatch = normalizedText.match(/\b(\d{1,2})\s*[./-]\s*(\d{1,2})(?:\s*[./-]\s*(\d{2,4}))?\b/);
   if (numericMatch) {
     const day = Number(numericMatch[1]);
@@ -1220,6 +1242,10 @@ function enrichBrainResult(
     known_values_required_next_call: extras?.known_values_required_next_call ?? result.known_values_required_next_call,
     leaping_function_arguments: extras?.leaping_function_arguments ?? result.leaping_function_arguments,
   };
+}
+
+function hasCompleteIsoBirthday(value: string | undefined): boolean {
+  return Boolean(value && /^\d{4}-\d{2}-\d{2}$/.test(value));
 }
 
 function mergeBirthday(
@@ -2352,7 +2378,7 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
     }));
   }
 
-  if (birthdayMerge.parse.status === 'incomplete_year') {
+  if (birthdayMerge.parse.status === 'incomplete_year' && !hasCompleteIsoBirthday(input.birthday_customer)) {
     const result = makeResult('vnr', {
       ok: true,
       next_action: 'ASK_BIRTH_YEAR',

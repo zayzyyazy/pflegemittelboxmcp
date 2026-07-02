@@ -322,3 +322,36 @@ test('stabilization: partial digits accumulate across turns after lookup retry',
   assert.equal(complete.next_action, 'CONFIRM_VNR');
   assert.match(complete.say, /E207643690/);
 });
+
+test('stabilization: ISO birthday_system echo does not trigger ASK_BIRTH_YEAR loop', () => {
+  const sessionId = 'vnr-iso-bday-echo';
+  runVerificationVnrBrain({ session_id: sessionId, vnr_candidate: 'E207064360', vnr_confirmed: true });
+  runVerificationVnrBrain({ session_id: sessionId, check_insurance_number_format_result: 'valid' });
+  runVerificationVnrBrain({ session_id: sessionId, get_customer_by_insurance_number_result: 'found' });
+  const result = runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: '1956-03-16',
+    birthday_system_available: true,
+  });
+  assert.equal(result.next_action, 'CALL_CHECK_BIRTHDAY');
+  assert.deepEqual(result.function_arguments, { birthday: '1956-03-16' });
+});
+
+test('stabilization: spoken full birthday then ISO echo proceeds to check', () => {
+  const sessionId = 'vnr-bday-then-iso';
+  runVerificationVnrBrain({ session_id: sessionId, vnr_candidate: 'E207064360', vnr_confirmed: true });
+  runVerificationVnrBrain({ session_id: sessionId, check_insurance_number_format_result: 'valid' });
+  runVerificationVnrBrain({ session_id: sessionId, get_customer_by_insurance_number_result: 'found' });
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'sechzehnter März neunzehnhundertsechsundfünfzig',
+    birthday_system_available: true,
+  });
+  const echo = runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: '1956-03-16',
+    birthday_system_available: true,
+  });
+  assert.equal(echo.next_action, 'CALL_CHECK_BIRTHDAY');
+  assert.deepEqual(echo.function_arguments, { birthday: '1956-03-16' });
+});
