@@ -281,7 +281,19 @@ const BIRTHDAY_STT_TOKEN_REPAIRS: Record<string, string> = {
   siebzeen: 'siebzehn',
   achtzeen: 'achtzehn',
   neunzeen: 'neunzehn',
+  neuzen: 'neunzehn',
+  neuzhen: 'neunzehn',
+  neuzehn: 'neunzehn',
 };
+
+const BIRTHDAY_STT_PHRASE_REPAIRS: Array<[RegExp, string]> = [
+  [/neuzenhundert/g, 'neunzehnhundert'],
+  [/neuzhenhundert/g, 'neunzehnhundert'],
+  [/neuzehnhundert/g, 'neunzehnhundert'],
+  [/neunzehn\s*hundert/g, 'neunzehnhundert'],
+  [/neunzehn\s*hunert/g, 'neunzehnhundert'],
+  [/achtzehn\s*hundert/g, 'achtzehnhundert'],
+];
 
 const HOUSE_NUMBER_SUFFIX_WORDS = new Set(['a', 'b', 'c', 'd', 'alpha', 'beta']);
 const YES_WORDS = ['ja', 'jawohl', 'stimmt', 'genau', 'korrekt', 'richtig', 'das stimmt'];
@@ -653,6 +665,14 @@ function repairBirthdayToken(normalized: string): string {
   return BIRTHDAY_STT_TOKEN_REPAIRS[normalized] ?? normalized;
 }
 
+function preprocessBirthdaySpeech(rawText: string): string {
+  let text = rawText.toLowerCase().trim();
+  for (const [pattern, replacement] of BIRTHDAY_STT_PHRASE_REPAIRS) {
+    text = text.replace(pattern, replacement);
+  }
+  return text;
+}
+
 function parseMonthToken(normalized: string): number | undefined {
   const repaired = repairBirthdayToken(normalized);
   return MONTH_WORDS[repaired] ?? ORDINAL_MONTH_WORDS[repaired];
@@ -717,7 +737,9 @@ function parseGermanYearTokens(tokens: Token[], start: number): { year: number |
 function parseBirthday(rawText: string | undefined): BirthdayParseResult {
   if (!rawText) return { status: 'missing', iso: null };
 
-  const numericMatch = rawText.match(/\b(\d{1,2})\s*[./-]\s*(\d{1,2})(?:\s*[./-]\s*(\d{2,4}))?\b/);
+  const normalizedText = preprocessBirthdaySpeech(rawText);
+
+  const numericMatch = normalizedText.match(/\b(\d{1,2})\s*[./-]\s*(\d{1,2})(?:\s*[./-]\s*(\d{2,4}))?\b/);
   if (numericMatch) {
     const day = Number(numericMatch[1]);
     const month = Number(numericMatch[2]);
@@ -731,7 +753,7 @@ function parseBirthday(rawText: string | undefined): BirthdayParseResult {
       : { status: 'impossible', iso: null, reason: 'Birthday looked numeric but was impossible or in the future.' };
   }
 
-  const spaceNumericMatch = rawText.match(/\b(\d{1,2})\s+(\d{1,2})\s+(\d{2,4})\b/);
+  const spaceNumericMatch = normalizedText.match(/\b(\d{1,2})\s+(\d{1,2})\s+(\d{2,4})\b/);
   if (spaceNumericMatch) {
     const day = Number(spaceNumericMatch[1]);
     const month = Number(spaceNumericMatch[2]);
@@ -742,7 +764,7 @@ function parseBirthday(rawText: string | undefined): BirthdayParseResult {
       : { status: 'impossible', iso: null, reason: 'Birthday looked numeric but was impossible or in the future.' };
   }
 
-  const tokens = tokenize(rawText);
+  const tokens = tokenize(normalizedText);
   for (let i = 0; i < tokens.length; i += 1) {
     const monthValue = parseMonthToken(tokens[i].normalized);
     if (monthValue === undefined || i === 0) continue;
@@ -758,10 +780,18 @@ function parseBirthday(rawText: string | undefined): BirthdayParseResult {
       : { status: 'impossible', iso: null, reason: 'Birthday was impossible or in the future.' };
   }
 
-  const tokensOnlyYear = tokenize(rawText);
+  const tokensOnlyYear = tokenize(normalizedText);
   const yearOnly = parseGermanYearTokens(tokensOnlyYear, 0);
   if (yearOnly.year !== null && yearOnly.used === tokensOnlyYear.length) {
     return { status: 'missing', iso: null, year: yearOnly.year };
+  }
+
+  // Single compound year token after STT repair, e.g. neunzehnhundertsechsundfünfzig
+  const compactYear = parseGermanCardinalWord(
+    repairBirthdayToken(normalizeToken(normalizedText.replace(/\s+/g, '')))
+  );
+  if (compactYear !== null && compactYear >= 1900 && compactYear <= new Date().getUTCFullYear()) {
+    return { status: 'missing', iso: null, year: compactYear };
   }
 
   return { status: 'missing', iso: null };
@@ -1059,6 +1089,26 @@ function mergeBirthday(
         value: iso,
         parse: { status: 'complete', iso, day: pendingDay, month: pendingMonth, year: parsed.year } as BirthdayParseResult,
       };
+    }
+  }
+  // Year-only follow-up after ASK_BIRTH_YEAR: merge pending day/month even if parse status is missing.
+  if (!existing && pendingDay && pendingMonth) {
+    const yearTokens = tokenize(preprocessBirthdaySpeech(latestText));
+    const yearParsed = parseGermanYearTokens(yearTokens, 0);
+    if (yearParsed.year !== null) {
+      const iso = toIsoDate(pendingDay, pendingMonth, yearParsed.year);
+      if (iso) {
+        return {
+          value: iso,
+          parse: {
+            status: 'complete',
+            iso,
+            day: pendingDay,
+            month: pendingMonth,
+            year: yearParsed.year,
+          } as BirthdayParseResult,
+        };
+      }
     }
   }
   return {
@@ -2100,7 +2150,7 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
     const result = makeResult('vnr', {
       ok: true,
       next_action: 'ASK_BIRTH_YEAR',
-      say: 'Bitte nennen Sie mir noch das Geburtsjahr vollständig.',
+      say: 'Bitte nennen Sie mir noch das Geburtsjahr vollständig, zum Beispiel neunzehnhundertsechsundfünfzig.',
       reason: birthdayMerge.parse.reason ?? 'Birthday was only partially provided.',
       missing_fields: ['birth_year'],
       safety_flags: [],
@@ -2158,6 +2208,18 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
     latestText &&
     birthdayMerge.parse.status === 'missing'
   ) {
+    const pendingDay = session?.pending_birthday_day;
+    const pendingMonth = session?.pending_birthday_month;
+    if (pendingDay && pendingMonth) {
+      return finalize(makeResult('vnr', {
+        ok: true,
+        next_action: 'ASK_BIRTH_YEAR',
+        say: 'Ich habe Tag und Monat verstanden. Bitte nennen Sie mir jetzt nur noch das Geburtsjahr vollständig.',
+        reason: 'Day and month are stored in session but the year utterance could not be parsed.',
+        missing_fields: ['birth_year'],
+        safety_flags: ['birthday_year_retry'],
+      }));
+    }
     return finalize(makeResult('vnr', {
       ok: false,
       next_action: 'ASK_BIRTHDAY',

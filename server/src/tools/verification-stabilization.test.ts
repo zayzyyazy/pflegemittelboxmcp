@@ -158,6 +158,38 @@ test('stabilization: vnr_raw alone resolves to candidate', () => {
   assert.equal(result.next_action, 'CONFIRM_VNR');
 });
 
+test('stabilization: VNR neuzenhundert STT typo parses full birthday', () => {
+  const sessionId = 'vnr-neuzen-typo';
+  runVerificationVnrBrain({ session_id: sessionId, vnr_candidate: 'E207064360', vnr_confirmed: true });
+  runVerificationVnrBrain({ session_id: sessionId, check_insurance_number_format_result: 'valid' });
+  runVerificationVnrBrain({ session_id: sessionId, get_customer_by_insurance_number_result: 'found' });
+  const result = runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'zehnter märz neuzenhundertsechsundfünfzig',
+    birthday_system_available: true,
+  });
+  assert.equal(result.next_action, 'CALL_CHECK_BIRTHDAY');
+  assert.deepEqual(result.function_arguments, { birthday: '1956-03-10' });
+});
+
+test('stabilization: VNR year-only follow-up after incomplete parses with neuzen typo', () => {
+  const sessionId = 'vnr-year-followup';
+  runVerificationVnrBrain({ session_id: sessionId, vnr_candidate: 'E207064360', vnr_confirmed: true });
+  runVerificationVnrBrain({ session_id: sessionId, check_insurance_number_format_result: 'valid' });
+  runVerificationVnrBrain({ session_id: sessionId, get_customer_by_insurance_number_result: 'found' });
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'zehnter märz',
+  });
+  const result = runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'neuzenhundertsechsundfünfzig',
+    birthday_system_available: true,
+  });
+  assert.equal(result.next_action, 'CALL_CHECK_BIRTHDAY');
+  assert.deepEqual(result.function_arguments, { birthday: '1956-03-10' });
+});
+
 test('stabilization: stale ja on lookup-result turn asks birthday normally', () => {
   const sessionId = 'vnr-stale-ja';
   runVerificationVnrBrain({ session_id: sessionId, latest_customer_input: 'E207064360' });
