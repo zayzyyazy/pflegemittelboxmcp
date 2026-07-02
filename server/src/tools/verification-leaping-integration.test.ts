@@ -297,7 +297,7 @@ test('20. cross-path address not_found twice then VNR reuses reliable birthday f
     house_number: '100',
     birthday_customer: '1956-03-16',
     get_customer_by_plz_geb_result: 'not_found',
-    address_lookup_attempts: 2,
+    address_lookup_attempts: 3,
   });
   assert.equal(addressFallback.next_action, 'FALLBACK_TO_VNR');
   assert.equal(addressFallback.stored_values?.birthday_customer, '1956-03-16');

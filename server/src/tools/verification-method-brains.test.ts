@@ -150,13 +150,13 @@ test('address path never calls check_birthday', () => {
   assert.ok(result.safety_flags.includes('never_call_check_birthday_in_address_path'));
 });
 
-test('address path falls back to VNR after two failed lookups', () => {
+test('address path falls back to VNR after three failed lookups', () => {
   const result = runVerificationAddressBrain({
     plz: '22765',
     house_number: '14',
     birthday_customer: '1948-05-03',
     get_customer_by_plz_geb_result: 'not_found',
-    address_lookup_attempts: 2,
+    address_lookup_attempts: 3,
   });
 
   assert.equal(result.next_action, 'FALLBACK_TO_VNR');
@@ -244,7 +244,7 @@ test('second address not_found falls back to VNR', () => {
     house_number: '100',
     birthday_customer: '1956-03-16',
     get_customer_by_plz_geb_result: 'not_found',
-    address_lookup_attempts: 2,
+    address_lookup_attempts: 3,
   });
 
   assert.equal(result.next_action, 'FALLBACK_TO_VNR');
@@ -397,7 +397,7 @@ test('stateless mode returns known_values_required_next_call with parsed values'
   assert.equal(result.stored_values?.birthday_customer, '1956-03-16');
 });
 
-test('first address not_found asks for confirmation, second falls back to VNR', () => {
+test('first address not_found asks for confirmation, third fails back to VNR', () => {
   const sessionId = 'address-not-found-flow';
 
   const first = runVerificationAddressBrain({
@@ -416,8 +416,15 @@ test('first address not_found asks for confirmation, second falls back to VNR', 
     get_customer_by_plz_geb_result: 'not_found',
     address_lookup_attempts: 2,
   });
-  assert.equal(second.next_action, 'FALLBACK_TO_VNR');
-  assert.equal(second.action_type, 'SAY_ONLY');
+  assert.equal(second.next_action, 'CONFIRM_ADDRESS_VALUES');
+
+  const third = runVerificationAddressBrain({
+    session_id: sessionId,
+    get_customer_by_plz_geb_result: 'not_found',
+    address_lookup_attempts: 3,
+  });
+  assert.equal(third.next_action, 'FALLBACK_TO_VNR');
+  assert.equal(third.action_type, 'SAY_ONLY');
 });
 
 test('address path exposes action_type aliases without removing legacy fields', () => {

@@ -309,6 +309,8 @@ const BIRTHDAY_STT_PHRASE_REPAIRS: Array<[RegExp, string]> = [
 
 const HOUSE_NUMBER_SUFFIX_WORDS = new Set(['a', 'b', 'c', 'd', 'alpha', 'beta']);
 const YES_WORDS = ['ja', 'jawohl', 'stimmt', 'genau', 'korrekt', 'richtig', 'das stimmt'];
+/** Failed address lookups before suggesting VNR instead of another confirm/retry cycle. */
+const ADDRESS_LOOKUP_MAX_ATTEMPTS_BEFORE_VNR = 3;
 const FUNCTION_RESULT_LIKE_INPUTS = ['valid', 'true', 'false', 'found', 'not_found', 'kein kunde gefunden'];
 const NEUKUNDE_PHRASES = ['ich bin neukunde', 'neukunde', 'neu kunde', 'bin neu bei', 'noch kein kunde', 'bin ein neukunde'];
 const verificationSessions = new Map<string, VerificationSessionState>();
@@ -459,6 +461,101 @@ function isNoLike(text: string | undefined): boolean {
   if (!text) return false;
   const normalized = text.toLowerCase().trim().replace(/[.!?,]+$/g, '');
   return /^(nein\b|nee\b|nicht\b|falsch\b|stimmt nicht\b|das stimmt nicht\b|das ist falsch\b)/.test(normalized);
+}
+
+function normalizeUtteranceForCue(text: string): string {
+  return text.toLowerCase().trim().replace(/[.!?,]+$/g, '');
+}
+
+function utteranceMentionsPostalCodeMethod(text: string | undefined): boolean {
+  if (!text) return false;
+  const normalized = normalizeUtteranceForCue(text);
+  return (
+    /\b(über|mit|per|via)\s+(die\s+)?post\s*-?\s*leitzahl\b/.test(normalized) ||
+    /\bpost\s*-?\s*leitzahl\s+(bitte|wäre|waere|gerne)\b/.test(normalized) ||
+    /\b(postleitzahl|plz)\s+(nutzen|verwenden|nehmen|machen)\b/.test(normalized)
+  );
+}
+
+function utteranceMentionsInsuranceMethod(text: string | undefined): boolean {
+  if (!text) return false;
+  const normalized = normalizeUtteranceForCue(text);
+  return /\b(versicherungsnummer|versichertennummer|vnr)\b/.test(normalized);
+}
+
+function utteranceIsAddressMethodChoice(text: string | undefined): boolean {
+  return utteranceMentionsPostalCodeMethod(text) || utteranceMentionsInsuranceMethod(text);
+}
+
+function utteranceIsWaitingOrDeferral(text: string | undefined): boolean {
+  if (!text) return false;
+  const normalized = normalizeUtteranceForCue(text);
+  return (
+    /^(moment|einen moment|einen augenblick|sekunde|eine sekunde|warten|halt)\b/.test(normalized) ||
+    /\b(moment|einen moment|bin gleich)\b/.test(normalized)
+  );
+}
+
+function utteranceIsStalePlzAcknowledgement(text: string | undefined): boolean {
+  if (!text) return false;
+  if (!isYesLike(text)) return false;
+  return extractDigitRuns(text).join('').length === 0;
+}
+
+function utteranceShouldNotCountAsPlzAttempt(text: string | undefined): boolean {
+  if (!text) return false;
+  return (
+    utteranceIsAddressMethodChoice(text) ||
+    utteranceIsWaitingOrDeferral(text) ||
+    utteranceIsStalePlzAcknowledgement(text)
+  );
+}
+
+function utteranceRequestsAddressRetry(text: string | undefined): boolean {
+  if (!text) return false;
+  const normalized = normalizeUtteranceForCue(text);
+  return (
+    (/\b(noch\s+mal|nochmal|erneut|wieder)\b/.test(normalized) &&
+      /\b(postleitzahl|post\s*-?\s*leitzahl|plz|adresse|angaben|daten)\b/.test(normalized)) ||
+    /\bpost\s*-?\s*leitzahl\s+probieren\b/.test(normalized)
+  );
+}
+
+function hasAddressFieldCue(text: string, field: 'birthday' | 'plz' | 'house_number'): boolean {
+  const normalized = text.toLowerCase();
+  if (field === 'birthday') {
+    return /\b(geburtsdatum|geburtstag|geboren|geburtsjahr|geb\.?\s*-?\s*datum)\b/.test(normalized);
+  }
+  if (field === 'plz') {
+    return /\b(postleitzahl|post\s*-?\s*leitzahl|plz)\b/.test(normalized);
+  }
+  return /\b(hausnummer|haus\s*-?\s*nr|hausnr)\b/.test(normalized);
+}
+
+function extractYearCandidatesFromSpeech(rawText: string): number[] {
+  const tokens = tokenize(preprocessBirthdaySpeech(rawText));
+  const years: number[] = [];
+  for (let i = 0; i < tokens.length; i += 1) {
+    const parsed = parseGermanYearTokens(tokens, i);
+    if (parsed.year === null || parsed.used === 0) continue;
+    const fullYear =
+      parsed.year >= 100 ? parsed.year : inferBirthdayYear(parsed.year, 1, 1) ?? parsed.year + 1900;
+    if (fullYear >= 1900 && fullYear <= new Date().getUTCFullYear()) {
+      years.push(fullYear);
+    }
+    i += parsed.used - 1;
+  }
+  return [...new Set(years)];
+}
+
+function findPrimaryYearFromSpeech(rawText: string): number | null {
+  const years = extractYearCandidatesFromSpeech(rawText);
+  if (years.length === 0) return null;
+  return years[years.length - 1];
+}
+
+function hasConflictingYearFragments(rawText: string): boolean {
+  return extractYearCandidatesFromSpeech(rawText).length > 1;
 }
 
 function utteranceLooksLikeDate(rawText: string | undefined): boolean {
@@ -1241,8 +1338,17 @@ function parseAddressCorrectionsFromUtterance(
   house_number?: string;
   birthdayMerge?: ReturnType<typeof mergeBirthday>;
   corrected: boolean;
+  birthdayUnclear?: boolean;
 } {
   if (!rawText) return { corrected: false };
+
+  const birthdayCue = hasAddressFieldCue(rawText, 'birthday');
+  const plzCue = hasAddressFieldCue(rawText, 'plz');
+  const houseCue = hasAddressFieldCue(rawText, 'house_number');
+  const explicitCueCount = [birthdayCue, plzCue, houseCue].filter(Boolean).length;
+  const birthdayOnly = birthdayCue && !plzCue && !houseCue;
+  const houseOnly = houseCue && !plzCue && !birthdayCue;
+  const plzOnly = plzCue && !birthdayCue && !houseCue;
 
   let corrected = false;
   const patch: {
@@ -1250,15 +1356,23 @@ function parseAddressCorrectionsFromUtterance(
     house_number?: string;
     birthdayMerge?: ReturnType<typeof mergeBirthday>;
     corrected: boolean;
+    birthdayUnclear?: boolean;
   } = { corrected: false };
 
-  const plz = parsePlz(rawText);
-  if (plz && /^\d{5}$/.test(plz) && plz !== existing.plz) {
-    patch.plz = plz;
-    corrected = true;
+  if (!birthdayOnly && !houseOnly) {
+    const plz = parsePlz(rawText);
+    if (plz && /^\d{5}$/.test(plz) && plz !== existing.plz) {
+      patch.plz = plz;
+      corrected = true;
+    }
   }
 
-  if (!utteranceContainsValidPlz(rawText)) {
+  const allowHouseNumber =
+    !birthdayOnly &&
+    !plzOnly &&
+    !utteranceContainsValidPlz(rawText) &&
+    (houseCue || (!birthdayCue && explicitCueCount === 0));
+  if (allowHouseNumber) {
     const house_number = parseHouseNumberFromUtterance(rawText);
     if (house_number && house_number !== existing.house_number) {
       patch.house_number = house_number;
@@ -1266,14 +1380,118 @@ function parseAddressCorrectionsFromUtterance(
     }
   }
 
-  const birthdayMerge = mergeBirthday(existing.birthday, rawText, pendingDay, pendingMonth);
-  if (birthdayMerge.value && birthdayMerge.value !== existing.birthday) {
-    patch.birthdayMerge = birthdayMerge;
-    corrected = true;
+  const allowBirthday = !plzOnly && !houseOnly && (birthdayCue || explicitCueCount === 0);
+  if (allowBirthday) {
+    if (birthdayCue && hasConflictingYearFragments(rawText)) {
+      patch.birthdayUnclear = true;
+    } else {
+      const birthdayResult = mergeBirthdayForAddressCorrection(
+        existing.birthday,
+        rawText,
+        pendingDay,
+        pendingMonth
+      );
+      if (birthdayResult.birthdayUnclear) {
+        patch.birthdayUnclear = true;
+      } else if (birthdayResult.corrected && birthdayResult.value) {
+        patch.birthdayMerge = {
+          value: birthdayResult.value,
+          parse: birthdayResult.parse,
+        };
+        corrected = true;
+      } else if (birthdayCue && birthdayResult.parse.status !== 'complete') {
+        patch.birthdayUnclear = true;
+      }
+    }
   }
 
   patch.corrected = corrected;
   return patch;
+}
+
+function mergeBirthdayForAddressCorrection(
+  existing: string | undefined,
+  rawText: string,
+  pendingDay?: number | null,
+  pendingMonth?: number | null
+): {
+  value?: string;
+  parse: BirthdayParseResult;
+  corrected: boolean;
+  birthdayUnclear?: boolean;
+} {
+  const parsed = parseBirthday(rawText);
+  if (parsed.status === 'complete' && parsed.iso) {
+    return {
+      value: parsed.iso,
+      parse: parsed,
+      corrected: parsed.iso !== existing,
+    };
+  }
+
+  if (parsed.status === 'incomplete_year' && parsed.day && parsed.month) {
+    const year = findPrimaryYearFromSpeech(rawText) ?? parsed.year;
+    if (year !== undefined && year !== null) {
+      const iso = toIsoDate(parsed.day, parsed.month, year);
+      if (iso) {
+        return {
+          value: iso,
+          parse: { status: 'complete', iso, day: parsed.day, month: parsed.month, year },
+          corrected: iso !== existing,
+        };
+      }
+    }
+  }
+
+  if (existing && hasCompleteIsoBirthday(existing)) {
+    const existingMonth = Number(existing.slice(5, 7));
+    const existingDay = Number(existing.slice(8, 10));
+    const day = parsed.day ?? existingDay;
+    const month = parsed.month ?? existingMonth;
+
+    const primaryYear = findPrimaryYearFromSpeech(rawText);
+    if (primaryYear !== null) {
+      const iso = toIsoDate(day, month, primaryYear);
+      if (iso && iso !== existing) {
+        return {
+          value: iso,
+          parse: {
+            status: 'complete',
+            iso,
+            day,
+            month,
+            year: primaryYear,
+          },
+          corrected: true,
+        };
+      }
+      if (iso === existing) {
+        return { value: existing, parse: parsed, corrected: false };
+      }
+    }
+
+    if (parsed.year !== undefined && parsed.status === 'missing') {
+      const iso = toIsoDate(day, month, parsed.year);
+      if (iso && iso !== existing) {
+        return {
+          value: iso,
+          parse: { status: 'complete', iso, day, month, year: parsed.year },
+          corrected: true,
+        };
+      }
+    }
+
+    if (hasConflictingYearFragments(rawText)) {
+      return { parse: { status: 'missing', iso: null }, corrected: false, birthdayUnclear: true };
+    }
+  }
+
+  const merged = mergeBirthday(existing, rawText, pendingDay, pendingMonth);
+  return {
+    value: merged.value,
+    parse: merged.parse,
+    corrected: Boolean(merged.value && merged.value !== existing),
+  };
 }
 
 function buildPlzGebFunctionArgs(plz: string, house_number: string, birthday_customer: string) {
@@ -2041,12 +2259,15 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
       session.pending_plz_confirm = null;
     } else if (parsedFromLatest.pendingPlzDigits !== undefined) {
       session.pending_plz_digits = parsedFromLatest.pendingPlzDigits;
-      if (latestText && !utteranceLooksLikeDate(latestText)) session.attempts.plz_attempts += 1;
+      if (latestText && !utteranceLooksLikeDate(latestText) && !utteranceShouldNotCountAsPlzAttempt(latestText)) {
+        session.attempts.plz_attempts += 1;
+      }
     } else if (
       rawInput.latest_customer_input &&
       awaitingField === 'plz' &&
       !utteranceLooksLikeDate(latestText) &&
-      !session.pending_plz_confirm
+      !session.pending_plz_confirm &&
+      !utteranceShouldNotCountAsPlzAttempt(latestText)
     ) {
       session.attempts.plz_attempts += 1;
     }
@@ -2085,7 +2306,9 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
     const pendingConfirm = session?.pending_plz_confirm;
     const plzAttempt = session?.attempts.plz_attempts ?? 0;
     const heardDigits =
-      latestText && !utteranceLooksLikeDate(latestText) ? extractDigitRuns(latestText).join('') : '';
+      latestText && !utteranceLooksLikeDate(latestText) && !utteranceShouldNotCountAsPlzAttempt(latestText)
+        ? extractDigitRuns(latestText).join('')
+        : '';
     if (pendingConfirm) {
       return finalize(
         makeResult('address', {
@@ -2095,6 +2318,48 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
           reason: `Merged partial PLZ digits into candidate ${pendingConfirm}; customer confirmation is required.`,
           missing_fields: ['plz'],
           safety_flags: ['plz_confirm_candidate'],
+          awaiting_field: 'plz',
+        }),
+        'plz'
+      );
+    }
+    if (utteranceIsAddressMethodChoice(latestText) && utteranceMentionsPostalCodeMethod(latestText)) {
+      return finalize(
+        makeResult('address', {
+          ok: true,
+          next_action: 'ASK_PLZ',
+          say: 'Gerne über die Postleitzahl. Bitte nennen Sie mir Ihre fünfstellige Postleitzahl.',
+          reason: 'Customer chose address verification via postal code; PLZ collection should start now.',
+          missing_fields: ['plz'],
+          safety_flags: ['address_method_choice'],
+          awaiting_field: 'plz',
+        }),
+        'plz'
+      );
+    }
+    if (utteranceIsWaitingOrDeferral(latestText)) {
+      return finalize(
+        makeResult('address', {
+          ok: true,
+          next_action: 'ASK_PLZ',
+          say: 'Ich warte. Bitte nennen Sie Ihre fünfstellige Postleitzahl, sobald Sie bereit sind.',
+          reason: 'Customer asked for a moment before providing PLZ.',
+          missing_fields: ['plz'],
+          safety_flags: ['plz_waiting'],
+          awaiting_field: 'plz',
+        }),
+        'plz'
+      );
+    }
+    if (utteranceIsStalePlzAcknowledgement(latestText) && !pendingConfirm) {
+      return finalize(
+        makeResult('address', {
+          ok: true,
+          next_action: 'ASK_PLZ',
+          say: 'Bitte nennen Sie mir Ihre fünfstellige Postleitzahl.',
+          reason: 'Short acknowledgement received while awaiting PLZ; prompt again without treating it as a failed parse.',
+          missing_fields: ['plz'],
+          safety_flags: ['plz_acknowledgement_only'],
           awaiting_field: 'plz',
         }),
         'plz'
@@ -2126,8 +2391,12 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
   }
 
   if (!input.house_number) {
+    const plzJustCollected = awaitingField === 'plz' && !baseHouseNumber && Boolean(input.plz);
     const houseAttempt = session?.attempts.house_number_attempts ?? 0;
-    const heardHouseDigits = latestText ? extractDigitRuns(latestText).join('') : '';
+    const heardHouseDigits =
+      latestText && awaitingField === 'house_number' && !plzJustCollected
+        ? extractDigitRuns(latestText).join('')
+        : '';
     return finalize(
       makeResult('address', {
         ok: true,
@@ -2195,6 +2464,21 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
     );
   }
 
+  if (awaitingField === 'confirm_address' && addressCorrections.birthdayUnclear) {
+    return finalize(
+      makeResult('address', {
+        ok: true,
+        next_action: 'ASK_BIRTH_YEAR',
+        say: 'Ich habe das Geburtsjahr bei der Korrektur nicht eindeutig verstanden. Bitte nennen Sie mir nur das Geburtsjahr noch einmal vollständig, zum Beispiel neunzehnhundertsechsundfünfzig.',
+        reason: 'Birthday correction was ambiguous, so only the birth year should be re-collected.',
+        missing_fields: ['birth_year'],
+        safety_flags: ['birthday_correction_unclear', 'never_call_check_birthday_in_address_path'],
+        awaiting_field: 'birthday_customer',
+      }),
+      'birthday_customer'
+    );
+  }
+
   if (input.get_customer_by_plz_geb_result === 'found') {
     return finalize(
       makeResult('address', {
@@ -2212,13 +2496,28 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
   }
 
   if (input.get_customer_by_plz_geb_result === 'not_found') {
-    if ((input.address_lookup_attempts ?? 0) >= 2) {
+    if (utteranceRequestsAddressRetry(latestText)) {
+      return finalize(
+        makeResult('address', {
+          ok: true,
+          next_action: 'CONFIRM_ADDRESS_VALUES',
+          say: `Gerne versuchen wir es noch einmal über die Postleitzahl. Ich habe bisher Postleitzahl ${input.plz}, Hausnummer ${input.house_number} und Ihr Geburtsdatum verstanden. Bitte bestätigen Sie diese Angaben oder sagen Sie mir, welches Feld falsch ist.`,
+          reason: 'Customer asked to retry address verification, so the safe next step is targeted confirmation.',
+          missing_fields: [],
+          safety_flags: ['address_retry_requested', 'never_call_check_birthday_in_address_path'],
+          awaiting_field: 'confirm_address',
+        }),
+        'confirm_address'
+      );
+    }
+
+    if ((input.address_lookup_attempts ?? 0) >= ADDRESS_LOOKUP_MAX_ATTEMPTS_BEFORE_VNR) {
       return finalize(
         makeResult('address', {
           ok: false,
           next_action: 'FALLBACK_TO_VNR',
           say: 'Ich konnte Sie über diese Angaben nicht eindeutig finden. Bitte nennen Sie mir stattdessen Ihre Versicherungsnummer.',
-          reason: 'Address lookup failed twice, so the next safe fallback is VNR verification.',
+          reason: `Address lookup failed ${ADDRESS_LOOKUP_MAX_ATTEMPTS_BEFORE_VNR} times, so the next safe fallback is VNR verification.`,
           missing_fields: [],
           safety_flags: ['fallback_to_vnr', 'never_call_check_birthday_in_address_path'],
           awaiting_field: null,
@@ -2249,8 +2548,14 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
       makeResult('address', {
         ok: true,
         next_action: 'CONFIRM_ADDRESS_VALUES',
-        say: `Ich habe bisher Postleitzahl ${input.plz}, Hausnummer ${input.house_number} und Ihr Geburtsdatum verstanden. Bitte bestätigen oder korrigieren Sie diese Angaben kurz.`,
-        reason: 'Address lookup failed once and the next safe step is targeted confirmation of the stored values.',
+        say:
+          (input.address_lookup_attempts ?? 0) >= 2
+            ? `Ich konnte Sie mit diesen Angaben leider noch nicht finden. Ich habe Postleitzahl ${input.plz}, Hausnummer ${input.house_number} und Ihr Geburtsdatum notiert. Bitte bestätigen Sie diese Werte oder sagen Sie mir, welches Feld falsch ist.`
+            : `Ich habe bisher Postleitzahl ${input.plz}, Hausnummer ${input.house_number} und Ihr Geburtsdatum verstanden. Bitte bestätigen oder korrigieren Sie diese Angaben kurz.`,
+        reason:
+          (input.address_lookup_attempts ?? 0) >= 2
+            ? 'Address lookup failed again; targeted confirmation should identify which field is wrong before another retry.'
+            : 'Address lookup failed once and the next safe step is targeted confirmation of the stored values.',
         missing_fields: [],
         safety_flags: ['address_retry', 'never_call_check_birthday_in_address_path'],
         awaiting_field: 'confirm_address',
@@ -2260,7 +2565,7 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
   }
 
   if (input.get_customer_by_plz_geb_result === 'error') {
-    if ((input.address_lookup_attempts ?? 0) >= 2) {
+    if ((input.address_lookup_attempts ?? 0) >= ADDRESS_LOOKUP_MAX_ATTEMPTS_BEFORE_VNR) {
       return finalize(
         makeResult('address', {
           ok: false,

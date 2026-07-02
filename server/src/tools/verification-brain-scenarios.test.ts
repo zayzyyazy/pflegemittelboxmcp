@@ -429,7 +429,7 @@ const SCENARIOS: Scenario[] = [
     session_id: 'addr-021',
     steps: [
       { input: { plz: '41372', house_number: '100', birthday_customer: '1956-03-16', get_customer_by_plz_geb_result: 'not_found' } },
-      { input: { latest_customer_input: 'ja', get_customer_by_plz_geb_result: { error: 'Kein Kunde gefunden' }, address_lookup_attempts: 2 } },
+      { input: { latest_customer_input: 'ja', get_customer_by_plz_geb_result: { error: 'Kein Kunde gefunden' }, address_lookup_attempts: 3 } },
     ],
     expect: { next_action: 'FALLBACK_TO_VNR', say_includes: 'Versicherungsnummer', never_function: 'get_customer_by_plz_geb' },
   },
@@ -666,7 +666,7 @@ const SCENARIOS: Scenario[] = [
     brain: 'address',
     session_id: 'shared-046',
     steps: [
-      { input: { plz: '41372', house_number: '100', birthday_customer: '1956-03-16', get_customer_by_plz_geb_result: 'not_found', address_lookup_attempts: 2 } },
+      { input: { plz: '41372', house_number: '100', birthday_customer: '1956-03-16', get_customer_by_plz_geb_result: 'not_found', address_lookup_attempts: 3 } },
     ],
     expect: {
       next_action: 'FALLBACK_TO_VNR',

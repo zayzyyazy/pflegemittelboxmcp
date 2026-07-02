@@ -459,3 +459,95 @@ test('stabilization: VNR birthday correction after check_birthday failed retries
   assert.deepEqual(corrected.function_arguments, { birthday: '1956-03-16' });
   assert.ok(corrected.safety_flags.includes('birthday_corrected_after_failed_check'));
 });
+
+test('stabilization: address method choice does not count as failed PLZ parse', () => {
+  const sessionId = 'addr-method-choice';
+  const result = runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'Machen wir das über die Postleitzahl bitte.',
+    phone_lookup_found: false,
+  });
+  assert.equal(result.next_action, 'ASK_PLZ');
+  assert.match(result.say ?? '', /Gerne über die Postleitzahl/);
+  assert.ok(result.safety_flags.includes('address_method_choice'));
+  assert.equal(result.attempts?.plz_attempts, 0);
+});
+
+test('stabilization: stale ja while awaiting PLZ prompts again without harsh retry', () => {
+  const sessionId = 'addr-stale-ja-plz';
+  const result = runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'Ja,',
+    phone_lookup_found: false,
+  });
+  assert.equal(result.next_action, 'ASK_PLZ');
+  assert.equal(result.say, 'Bitte nennen Sie mir Ihre fünfstellige Postleitzahl.');
+  assert.ok(result.safety_flags.includes('plz_acknowledgement_only'));
+});
+
+test('stabilization: PLZ collection does not set house_number_parse_retry on same turn', () => {
+  const result = runVerificationAddressBrain({
+    session_id: 'addr-plz-no-house-retry-flag',
+    latest_customer_input: 'vier eins drei sieben zwei',
+    phone_lookup_found: false,
+  });
+  assert.equal(result.next_action, 'ASK_HOUSE_NUMBER');
+  assert.ok(!result.safety_flags.includes('house_number_parse_retry'));
+});
+
+test('stabilization: birthday-only correction keeps house number and updates year', () => {
+  const sessionId = 'addr-bday-only-correction';
+  runVerificationAddressBrain({
+    session_id: sessionId,
+    plz: '41372',
+    house_number: '100',
+    birthday_customer: '1976-03-16',
+    get_customer_by_plz_geb_result: 'not_found',
+  });
+  const corrected = runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'Das Geburtsdatum ist sechzehnter März neunzehnhundertsechsundfünfzig',
+  });
+  assert.equal(corrected.next_action, 'CALL_GET_CUSTOMER_BY_PLZ_GEB');
+  assert.equal(corrected.stored_values?.house_number, '100');
+  assert.equal(corrected.stored_values?.birthday_customer, '1956-03-16');
+  assert.deepEqual(corrected.function_arguments, { plz: '41372', hnr: '100', bday: '1956-03-16' });
+});
+
+test('stabilization: ambiguous birthday correction asks for birth year instead of corrupting house number', () => {
+  const sessionId = 'addr-bday-ambiguous';
+  runVerificationAddressBrain({
+    session_id: sessionId,
+    plz: '41372',
+    house_number: '100',
+    birthday_customer: '1976-03-16',
+    get_customer_by_plz_geb_result: 'not_found',
+  });
+  const unclear = runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'Geburtsdatum ist der sechzehnte März sechsundfünfzig, hundertsechsundfünfzig',
+  });
+  assert.equal(unclear.next_action, 'ASK_BIRTH_YEAR');
+  assert.equal(unclear.stored_values?.house_number, '100');
+  assert.equal(unclear.stored_values?.birthday_customer, '1976-03-16');
+  assert.ok(unclear.safety_flags.includes('birthday_correction_unclear'));
+});
+
+test('stabilization: address retry request after failed lookups reopens confirmation', () => {
+  const sessionId = 'addr-retry-request';
+  runVerificationAddressBrain({
+    session_id: sessionId,
+    plz: '41372',
+    house_number: '100',
+    birthday_customer: '1956-03-16',
+    get_customer_by_plz_geb_result: 'not_found',
+    address_lookup_attempts: 3,
+  });
+  const retry = runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'Könnte das noch mal über die Postleitzahl probieren?',
+  });
+  assert.equal(retry.next_action, 'CONFIRM_ADDRESS_VALUES');
+  assert.match(retry.say ?? '', /noch einmal über die Postleitzahl/);
+  assert.ok(retry.safety_flags.includes('address_retry_requested'));
+});
