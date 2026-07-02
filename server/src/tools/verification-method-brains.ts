@@ -1833,12 +1833,13 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
   const latestCandidate = latestText
     ? parseCompactVnr(latestText) ?? normalizeVnrLoose(latestText).candidate
     : undefined;
+  const sessionCandidate = session?.vnr_candidate ?? undefined;
+  const boundCandidate = rawInput.vnr_candidate ?? rawInput.vnr_raw ?? undefined;
+  // Fresh valid parse from this turn beats stale session (e.g. digits-only poison from lowercase STT).
   const resolvedVnr = normalizeVnr(
-    rawInput.vnr_candidate ??
-      rawInput.vnr_raw ??
-      session?.vnr_candidate ??
-      latestCandidate ??
-      undefined
+    latestCandidate && /^[A-Z][0-9]{9}$/.test(latestCandidate)
+      ? latestCandidate
+      : boundCandidate ?? sessionCandidate ?? latestCandidate ?? undefined
   );
   const birthdayMerge = mergeBirthday(
     rawInput.birthday_customer ?? session?.birthday_customer ?? undefined,
@@ -1960,17 +1961,25 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
   }
 
   if (!/^[A-Z][0-9]{9}$/.test(input.vnr_candidate)) {
-    const nextAction = /^[0-9]{9,}$/.test(input.vnr_candidate) ? 'ASK_VNR_LETTER' : 'ASK_VNR';
+    const digitsOnly = /^[0-9]{9}$/.test(input.vnr_candidate);
+    const nextAction = digitsOnly ? 'ASK_VNR_LETTER' : 'ASK_VNR';
+    const attempt = input.vnr_request_count ?? 0;
+    const say = digitsOnly
+      ? attempt >= 1
+        ? 'Ich habe die neun Ziffern verstanden, aber mir fehlt noch der Anfangsbuchstabe. Bitte sagen Sie zuerst den Buchstaben, zum Beispiel E wie Emil, und dann die Ziffern.'
+        : 'Bitte nennen Sie mir auch den Anfangsbuchstaben Ihrer Versicherungsnummer, zum Beispiel E wie Emil.'
+      : attempt >= 1
+        ? 'Ich habe die Versicherungsnummer leider noch nicht vollständig verstanden. Bitte nennen Sie einen Buchstaben und dann neun Ziffern, oder buchstabieren Sie langsam.'
+        : 'Bitte nennen Sie mir Ihre Versicherungsnummer noch einmal vollständig.';
     return finalize(makeResult('vnr', {
-      ok: false,
+      ok: digitsOnly && attempt < 2,
       next_action: nextAction,
-      say:
-        nextAction === 'ASK_VNR_LETTER'
-          ? 'Bitte nennen Sie mir auch den Anfangsbuchstaben Ihrer Versicherungsnummer.'
-          : 'Bitte nennen Sie mir Ihre Versicherungsnummer noch einmal vollständig.',
-      reason: 'VNR must contain exactly one leading letter and nine digits before confirmation or lookup.',
-      missing_fields: ['vnr'],
-      safety_flags: ['vnr_missing_leading_letter'],
+      say,
+      reason: digitsOnly
+        ? 'Nine digits were captured but the leading insurance letter is still missing.'
+        : 'VNR must contain exactly one leading letter and nine digits before confirmation or lookup.',
+      missing_fields: digitsOnly ? ['vnr_letter'] : ['vnr'],
+      safety_flags: digitsOnly ? ['vnr_missing_leading_letter'] : ['vnr_shape_invalid'],
     }));
   }
 

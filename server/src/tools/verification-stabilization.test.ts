@@ -127,6 +127,29 @@ test('stabilization: compact VNR E207064360 from latest_customer_input', () => {
   assert.match(result.say, /E207064360/);
 });
 
+test('stabilization: lowercase spoken VNR letter e is accepted', () => {
+  const result = runVerificationVnrBrain({
+    session_id: 'vnr-lowercase-e',
+    latest_customer_input: 'e zwei null sieben null sechs vier drei sechs null',
+  });
+  assert.equal(result.next_action, 'CONFIRM_VNR');
+  assert.match(result.say, /E207064360/);
+});
+
+test('stabilization: fresh valid VNR parse overrides stale digits-only session', () => {
+  const sessionId = 'vnr-session-poison';
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'e zwei null sieben null sechs vier drei sechs null',
+  });
+  const fixed = runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'E zwei null sieben null sechs vier drei sechs null',
+  });
+  assert.equal(fixed.next_action, 'CONFIRM_VNR');
+  assert.match(fixed.say, /E207064360/);
+});
+
 test('stabilization: vnr_raw alone resolves to candidate', () => {
   const result = runVerificationVnrBrain({
     session_id: 'vnr-raw-only',

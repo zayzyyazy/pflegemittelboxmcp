@@ -39,10 +39,23 @@ export interface NormalizeVnrResult {
  * - Partial results when digits are missing
  */
 export function normalizeVnr(text: string): NormalizeVnrResult {
-  const lower = text.toLowerCase().trim();
+  const trimmed = text.trim();
+  const lower = trimmed.toLowerCase();
   const notes: string[] = [];
   let confidence: 'high' | 'medium' | 'low' = 'high';
   let letter: string | null = null;
+
+  // Compact typed/spoken: E207064360 or e207064360
+  const compact = trimmed.replace(/\s+/g, '');
+  const compactMatch = compact.match(/^([A-Za-z])(\d{9})$/);
+  if (compactMatch) {
+    return {
+      candidate: compactMatch[1].toUpperCase() + compactMatch[2],
+      valid_shape: true,
+      confidence: 'high',
+      notes: 'Parsed compact letter + nine digit VNR.',
+    };
+  }
 
   // ── Step 1: Extract the starting letter ──────────────────────────────
   // Primary: phonetic form "X wie Word" or "X, wie Word"
@@ -52,11 +65,19 @@ export function normalizeVnr(text: string): NormalizeVnrResult {
     notes.push(`Extracted ${letter} from phonetic "wie" pattern.`);
   } else {
     // Fallback: bare capital letter at a word boundary in the original text
-    const bareMatch = text.match(/\b([A-Z])\b/);
+    const bareMatch = trimmed.match(/\b([A-Z])\b/);
     if (bareMatch) {
       letter = bareMatch[1];
       notes.push(`Extracted bare letter ${letter} (no phonetic context).`);
       confidence = 'medium';
+    } else {
+      // STT often lowercases the leading letter: "e zwei null sieben..."
+      const firstToken = lower.split(/[\s,.\-/]+/).filter(Boolean)[0];
+      if (firstToken && /^[a-z]$/.test(firstToken)) {
+        letter = firstToken.toUpperCase();
+        notes.push(`Extracted leading letter ${letter} from first spoken token.`);
+        confidence = 'medium';
+      }
     }
   }
 
