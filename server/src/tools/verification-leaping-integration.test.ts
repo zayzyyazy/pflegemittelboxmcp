@@ -156,6 +156,8 @@ test('10. address partial PLZ eins drei sieben zwei while awaiting PLZ is reject
   assert.equal(result.awaiting_field, 'plz');
   assert.equal(result.stored_values?.plz, null);
   assert.equal(result.stored_values?.house_number, null);
+  assert.ok(result.say?.includes('eins, drei, sieben, zwei'));
+  assert.ok(result.safety_flags.includes('plz_partial_digits'));
 });
 
 test('11. phone with stable session persists birthday until check_birthday result', () => {

@@ -119,6 +119,8 @@ export interface VerificationSessionState extends VerificationSessionStoredValue
   pending_birthday_month: number | null;
   pending_vnr_letter: string | null;
   pending_vnr_digits: string | null;
+  pending_plz_digits: string | null;
+  pending_plz_confirm: string | null;
   awaiting_field: AddressAwaitingField | null;
   attempts: VerificationSessionAttempts;
 }
@@ -341,6 +343,8 @@ function emptySessionState(): VerificationSessionState {
     pending_birthday_month: null,
     pending_vnr_letter: null,
     pending_vnr_digits: null,
+    pending_plz_digits: null,
+    pending_plz_confirm: null,
     awaiting_field: null,
     attempts: emptyAttempts(),
   };
@@ -449,6 +453,17 @@ function isYesLike(text: string | undefined): boolean {
   return /^(ja\b|jawohl\b|das stimmt\b|stimmt\b|korrekt\b|richtig\b|genau\b|das ist (korrekt|richtig|stimmt))/.test(
     normalized
   );
+}
+
+function isNoLike(text: string | undefined): boolean {
+  if (!text) return false;
+  const normalized = text.toLowerCase().trim().replace(/[.!?,]+$/g, '');
+  return /^(nein\b|nee\b|nicht\b|falsch\b|stimmt nicht\b|das stimmt nicht\b|das ist falsch\b)/.test(normalized);
+}
+
+function utteranceLooksLikeDate(rawText: string | undefined): boolean {
+  if (!rawText) return false;
+  return /\d{1,2}\s*[./-]\s*\d{1,2}(?:\s*[./-]\s*\d{2,4})?/.test(rawText);
 }
 
 function isMissingBirthdaySystem(error: string | undefined): boolean {
@@ -1006,6 +1021,79 @@ function parsePlz(rawText: string | undefined): string | undefined {
   return digitRuns;
 }
 
+const DIGIT_TO_GERMAN_WORD: Record<string, string> = {
+  '0': 'null',
+  '1': 'eins',
+  '2': 'zwei',
+  '3': 'drei',
+  '4': 'vier',
+  '5': 'fünf',
+  '6': 'sechs',
+  '7': 'sieben',
+  '8': 'acht',
+  '9': 'neun',
+};
+
+function formatDigitsForConfirmation(digits: string): string {
+  return digits
+    .split('')
+    .map((digit) => DIGIT_TO_GERMAN_WORD[digit] ?? digit)
+    .join(', ');
+}
+
+function resolvePlzFromSpeech(
+  rawText: string | undefined,
+  pendingDigits?: string | null
+): { plz?: string; partialDigits?: string | null; plzConfirmCandidate?: string } {
+  if (!rawText) {
+    return pendingDigits ? { partialDigits: pendingDigits } : {};
+  }
+
+  if (utteranceLooksLikeDate(rawText)) {
+    return pendingDigits ? { partialDigits: pendingDigits } : {};
+  }
+
+  const directFive = rawText.match(/\b\d{5}\b/g);
+  if (directFive?.length) {
+    return { plz: directFive[0], partialDigits: null };
+  }
+
+  const runs = extractDigitRuns(rawText).filter((run) => run.length > 0);
+  const fiveRun = runs.find((run) => run.length === 5);
+  if (fiveRun) {
+    return { plz: fiveRun, partialDigits: null };
+  }
+
+  const utteranceDigits = runs.join('');
+  if (!utteranceDigits) {
+    return pendingDigits ? { partialDigits: pendingDigits } : {};
+  }
+
+  if (utteranceDigits.length === 5) {
+    return { plz: utteranceDigits, partialDigits: null };
+  }
+
+  if (utteranceDigits.length >= 3 && utteranceDigits.length < 5) {
+    return { partialDigits: utteranceDigits };
+  }
+
+  if (utteranceDigits.length < 3) {
+    const merged = `${pendingDigits ?? ''}${utteranceDigits}`;
+    if (merged.length === 5 && pendingDigits) {
+      return { plzConfirmCandidate: merged, partialDigits: null };
+    }
+    if (merged.length > 5) {
+      const fiveFromMerged = merged.slice(0, 5);
+      return { plz: fiveFromMerged, partialDigits: null };
+    }
+    if (merged.length > 0) {
+      return { partialDigits: merged };
+    }
+  }
+
+  return pendingDigits ? { partialDigits: pendingDigits } : {};
+}
+
 function stripHouseNumberSuffix(value: string): string {
   const compact = value.replace(/\s+/g, '');
   const match = compact.match(/^(\d+)/);
@@ -1111,17 +1199,24 @@ function parseAddressFieldFromUtterance(
   rawText: string | undefined,
   existingBirthday?: string,
   pendingDay?: number | null,
-  pendingMonth?: number | null
+  pendingMonth?: number | null,
+  pendingPlzDigits?: string | null
 ): {
   plz?: string;
   house_number?: string;
   birthdayMerge?: ReturnType<typeof mergeBirthday>;
+  pendingPlzDigits?: string | null;
+  plzConfirmCandidate?: string;
 } {
   if (!rawText) return {};
 
   if (awaitingField === 'plz') {
-    const plz = parsePlz(rawText);
-    return plz && /^\d{5}$/.test(plz) ? { plz } : {};
+    const resolved = resolvePlzFromSpeech(rawText, pendingPlzDigits);
+    return {
+      plz: resolved.plz,
+      pendingPlzDigits: resolved.plz ? null : resolved.partialDigits ?? null,
+      plzConfirmCandidate: resolved.plzConfirmCandidate,
+    };
   }
 
   if (awaitingField === 'house_number') {
@@ -1833,7 +1928,8 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
           latestText,
           baseBirthday,
           session?.pending_birthday_day,
-          session?.pending_birthday_month
+          session?.pending_birthday_month,
+          session?.pending_plz_digits
         );
 
   const birthdayMerge =
@@ -1842,10 +1938,31 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
 
   const lookupAfterCorrection = addressCorrections.corrected ? 'not_called' : baseLookupResult;
 
+  let resolvedPlz = parsedFromLatest.plz ?? basePlz;
+  if (awaitingField === 'plz' && session) {
+    if (parsedFromLatest.plzConfirmCandidate) {
+      session.pending_plz_confirm = parsedFromLatest.plzConfirmCandidate;
+      session.pending_plz_digits = null;
+    } else if (session.pending_plz_confirm) {
+      if (parsedFromLatest.plz) {
+        session.pending_plz_confirm = null;
+        resolvedPlz = parsedFromLatest.plz;
+      } else if (isYesLike(latestText)) {
+        resolvedPlz = session.pending_plz_confirm;
+        session.pending_plz_confirm = null;
+        session.pending_plz_digits = null;
+      } else if (isNoLike(latestText)) {
+        session.pending_plz_confirm = null;
+        session.pending_plz_digits = null;
+        resolvedPlz = basePlz;
+      }
+    }
+  }
+
   const input: VerificationAddressBrainInput = {
     ...rawInput,
     phone_lookup_found: rawInput.phone_lookup_found ?? session?.phone_lookup_found ?? undefined,
-    plz: parsedFromLatest.plz ?? basePlz,
+    plz: resolvedPlz,
     house_number: parsedFromLatest.house_number ?? baseHouseNumber,
     birthday_customer: birthdayMerge.value,
     get_customer_by_plz_geb_result: lookupAfterCorrection,
@@ -1873,8 +1990,21 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
 
   if (session) {
     session.phone_lookup_found = input.phone_lookup_found ?? session.phone_lookup_found;
-    if (input.plz) session.plz = input.plz;
-    else if (rawInput.latest_customer_input && awaitingField === 'plz') session.attempts.plz_attempts += 1;
+    if (input.plz) {
+      session.plz = input.plz;
+      session.pending_plz_digits = null;
+      session.pending_plz_confirm = null;
+    } else if (parsedFromLatest.pendingPlzDigits !== undefined) {
+      session.pending_plz_digits = parsedFromLatest.pendingPlzDigits;
+      if (latestText && !utteranceLooksLikeDate(latestText)) session.attempts.plz_attempts += 1;
+    } else if (
+      rawInput.latest_customer_input &&
+      awaitingField === 'plz' &&
+      !utteranceLooksLikeDate(latestText) &&
+      !session.pending_plz_confirm
+    ) {
+      session.attempts.plz_attempts += 1;
+    }
     if (input.house_number) session.house_number = input.house_number;
     else if (rawInput.latest_customer_input && awaitingField === 'house_number') {
       session.attempts.house_number_attempts += 1;
@@ -1906,17 +2036,44 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
   }
 
   if (!input.plz) {
+    const pendingPlz = session?.pending_plz_digits;
+    const pendingConfirm = session?.pending_plz_confirm;
+    const plzAttempt = session?.attempts.plz_attempts ?? 0;
+    const heardDigits =
+      latestText && !utteranceLooksLikeDate(latestText) ? extractDigitRuns(latestText).join('') : '';
+    if (pendingConfirm) {
+      return finalize(
+        makeResult('address', {
+          ok: true,
+          next_action: 'ASK_PLZ',
+          say: `Habe ich ${formatDigitsForConfirmation(pendingConfirm)} als Postleitzahl richtig verstanden? Bitte bestätigen Sie oder nennen Sie die vollständige Postleitzahl noch einmal.`,
+          reason: `Merged partial PLZ digits into candidate ${pendingConfirm}; customer confirmation is required.`,
+          missing_fields: ['plz'],
+          safety_flags: ['plz_confirm_candidate'],
+          awaiting_field: 'plz',
+        }),
+        'plz'
+      );
+    }
+    const say = pendingPlz
+      ? `Ich habe bisher ${formatDigitsForConfirmation(pendingPlz)} verstanden. Eine Postleitzahl hat fünf Ziffern. Bitte nennen Sie die vollständige Postleitzahl noch einmal oder ergänzen Sie die fehlende Ziffer.`
+      : utteranceLooksLikeDate(latestText)
+        ? 'Das klingt nach einem Datum. Ich brauche zuerst Ihre fünfstellige Postleitzahl.'
+        : plzAttempt >= 1 && heardDigits
+          ? `Ich habe ${formatDigitsForConfirmation(heardDigits)} verstanden, aber als Postleitzahl brauche ich fünf Ziffern. Bitte wiederholen Sie die vollständige Postleitzahl.`
+          : plzAttempt >= 1
+            ? 'Ich habe die Postleitzahl leider noch nicht vollständig verstanden. Bitte nennen Sie Ihre fünfstellige Postleitzahl noch einmal.'
+            : 'Bitte nennen Sie mir Ihre Postleitzahl.';
     return finalize(
       makeResult('address', {
         ok: true,
         next_action: 'ASK_PLZ',
-        say:
-          (input.address_lookup_attempts ?? 0) >= 1
-            ? 'Ich habe bisher noch keine vollständige Postleitzahl. Bitte nennen oder bestätigen Sie die Postleitzahl.'
-            : 'Bitte nennen Sie mir Ihre Postleitzahl.',
-        reason: 'PLZ is required before the address lookup can run.',
+        say,
+        reason: pendingPlz
+          ? `Partial PLZ digits (${pendingPlz}) are stored and one more digit is required.`
+          : 'PLZ is required before the address lookup can run.',
         missing_fields: ['plz'],
-        safety_flags: [],
+        safety_flags: pendingPlz ? ['plz_partial_digits'] : heardDigits ? ['plz_parse_retry'] : [],
         awaiting_field: 'plz',
       }),
       'plz'
@@ -1924,17 +2081,21 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
   }
 
   if (!input.house_number) {
+    const houseAttempt = session?.attempts.house_number_attempts ?? 0;
+    const heardHouseDigits = latestText ? extractDigitRuns(latestText).join('') : '';
     return finalize(
       makeResult('address', {
         ok: true,
         next_action: 'ASK_HOUSE_NUMBER',
         say:
-          (input.address_lookup_attempts ?? 0) >= 1
-            ? `Ich habe bisher Postleitzahl ${input.plz} verstanden. Bitte nennen oder bestätigen Sie jetzt noch die Hausnummer.`
-            : 'Bitte nennen Sie mir Ihre Hausnummer.',
+          houseAttempt >= 1 && heardHouseDigits
+            ? `Ich habe bisher ${heardHouseDigits} als Hausnummer verstanden, aber das war nicht eindeutig. Bitte nennen oder bestätigen Sie die Hausnummer zu Postleitzahl ${input.plz}.`
+            : houseAttempt >= 1
+              ? `Ich habe bisher Postleitzahl ${input.plz} verstanden. Bitte nennen oder bestätigen Sie jetzt noch die Hausnummer.`
+              : 'Bitte nennen Sie mir Ihre Hausnummer.',
         reason: 'House number is required before the address lookup can run.',
         missing_fields: ['house_number'],
-        safety_flags: [],
+        safety_flags: heardHouseDigits ? ['house_number_parse_retry'] : [],
         awaiting_field: 'house_number',
       }),
       'house_number'
@@ -2303,15 +2464,18 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
 
   if (!/^[A-Z][0-9]{9}$/.test(input.vnr_candidate)) {
     const digitsOnly = /^[0-9]{9}$/.test(input.vnr_candidate);
+    const partialDigits = /^[0-9]{1,8}$/.test(input.vnr_candidate ?? '');
     const nextAction = digitsOnly ? 'ASK_VNR_LETTER' : 'ASK_VNR';
     const attempt = input.vnr_request_count ?? 0;
     const say = digitsOnly
       ? attempt >= 1
         ? 'Ich habe die neun Ziffern verstanden, aber mir fehlt noch der Anfangsbuchstabe. Bitte sagen Sie zuerst den Buchstaben, zum Beispiel E wie Emil, und dann die Ziffern.'
         : 'Bitte nennen Sie mir auch den Anfangsbuchstaben Ihrer Versicherungsnummer, zum Beispiel E wie Emil.'
-      : attempt >= 1
-        ? 'Ich habe die Versicherungsnummer leider noch nicht vollständig verstanden. Bitte nennen Sie einen Buchstaben und dann neun Ziffern, oder buchstabieren Sie langsam.'
-        : 'Bitte nennen Sie mir Ihre Versicherungsnummer noch einmal vollständig.';
+      : partialDigits
+        ? `Ich habe bisher ${formatDigitsForConfirmation(input.vnr_candidate ?? '')} verstanden, aber die Versicherungsnummer braucht einen Buchstaben und neun Ziffern. Bitte nennen Sie sie vollständig noch einmal.`
+        : attempt >= 1
+          ? 'Ich habe die Versicherungsnummer leider noch nicht vollständig verstanden. Bitte nennen Sie einen Buchstaben und dann neun Ziffern, oder buchstabieren Sie langsam.'
+          : 'Bitte nennen Sie mir Ihre Versicherungsnummer noch einmal vollständig.';
     return finalize(makeResult('vnr', {
       ok: digitsOnly && attempt < 2,
       next_action: nextAction,

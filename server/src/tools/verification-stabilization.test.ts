@@ -382,3 +382,52 @@ test('stabilization: address PLZ correction after not_found retries lookup', () 
   });
   assert.ok(corrected.safety_flags.includes('address_corrected'));
 });
+
+test('stabilization: partial PLZ echoes understood digits instead of generic loop', () => {
+  const sessionId = 'addr-partial-plz-echo';
+  const first = runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'eins drei sieben zwei',
+    phone_lookup_found: false,
+  });
+  assert.equal(first.next_action, 'ASK_PLZ');
+  assert.ok(first.say?.includes('eins, drei, sieben, zwei'));
+  assert.ok(first.safety_flags.includes('plz_partial_digits'));
+
+  const repeat = runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'eins sieben drei zwei',
+    phone_lookup_found: false,
+  });
+  assert.equal(repeat.next_action, 'ASK_PLZ');
+  assert.ok(repeat.say?.includes('eins, sieben, drei, zwei'));
+  assert.notEqual(repeat.say, 'Bitte nennen Sie mir Ihre Postleitzahl.');
+});
+
+test('stabilization: date spoken while awaiting PLZ does not parse as PLZ digits', () => {
+  const result = runVerificationAddressBrain({
+    session_id: 'addr-date-not-plz',
+    latest_customer_input: '16.03.1956',
+    phone_lookup_found: false,
+  });
+  assert.equal(result.next_action, 'ASK_PLZ');
+  assert.equal(result.stored_values?.plz, null);
+  assert.ok(result.say?.includes('Datum'));
+});
+
+test('stabilization: partial PLZ append asks confirmation before storing PLZ', () => {
+  const sessionId = 'addr-partial-append';
+  runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'eins drei sieben zwei',
+    phone_lookup_found: false,
+  });
+  const confirm = runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'fünf',
+    phone_lookup_found: false,
+  });
+  assert.equal(confirm.stored_values?.plz, null);
+  assert.ok(confirm.safety_flags.includes('plz_confirm_candidate'));
+  assert.ok(confirm.say?.includes('bestätigen'));
+});

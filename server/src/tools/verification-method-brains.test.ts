@@ -274,6 +274,52 @@ test('partial four-digit PLZ is rejected and not stored as house_number while aw
   assert.equal(result.awaiting_field, 'plz');
   assert.equal(result.stored_values?.plz, null);
   assert.equal(result.stored_values?.house_number, null);
+  assert.ok(result.say?.includes('eins, drei, sieben, zwei'));
+  assert.ok(result.safety_flags.includes('plz_partial_digits'));
+});
+
+test('partial PLZ echo then full spoken PLZ completes on next turn', () => {
+  const sessionId = 'address-partial-then-full-plz';
+  const partial = runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'eins drei sieben zwei',
+    phone_lookup_found: false,
+  });
+  assert.ok(partial.say?.includes('eins, drei, sieben, zwei'));
+
+  const complete = runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'vier eins drei sieben zwei',
+    phone_lookup_found: false,
+  });
+  assert.equal(complete.next_action, 'ASK_HOUSE_NUMBER');
+  assert.equal(complete.stored_values?.plz, '41372');
+});
+
+test('partial PLZ digit append requires confirmation before accepting', () => {
+  const sessionId = 'address-partial-append-confirm';
+  runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'eins drei sieben zwei',
+    phone_lookup_found: false,
+  });
+  const appended = runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'fünf',
+    phone_lookup_found: false,
+  });
+  assert.equal(appended.next_action, 'ASK_PLZ');
+  assert.equal(appended.stored_values?.plz, null);
+  assert.ok(appended.say?.includes('eins, drei, sieben, zwei, fünf'));
+  assert.ok(appended.safety_flags.includes('plz_confirm_candidate'));
+
+  const confirmed = runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'ja',
+    phone_lookup_found: false,
+  });
+  assert.equal(confirmed.next_action, 'ASK_HOUSE_NUMBER');
+  assert.equal(confirmed.stored_values?.plz, '13725');
 });
 
 test('partial digits can be stored as house_number only when awaiting house_number', () => {
