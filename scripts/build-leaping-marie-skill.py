@@ -17,6 +17,7 @@ EXTRACTED = REPO_ROOT / "skills" / "leaping-marie" / "references" / "extracted"
 MANIFEST = EXTRACTED / "MANIFEST.json"
 SKILL_TEMPLATE = REPO_ROOT / "skills" / "leaping-marie" / "SKILL.template.md"
 CURSOR_SKILL = REPO_ROOT / ".cursor" / "skills" / "leaping-marie" / "SKILL.md"
+AGENTS_SKILL = REPO_ROOT / ".agents" / "skills" / "leaping-marie" / "SKILL.md"
 CODEX_SKILL = REPO_ROOT / ".codex" / "skills" / "leaping-marie" / "SKILL.md"
 CHATGPT_PACK = REPO_ROOT / "skills" / "leaping-marie" / "CHATGPT_KNOWLEDGE_PACK.md"
 
@@ -48,20 +49,21 @@ def main() -> int:
         template = SKILL_TEMPLATE.read_text(encoding="utf-8")
         skill_body = template.replace("{{DOC_INDEX}}", "\n".join(doc_index_lines))
 
-    CURSOR_SKILL.parent.mkdir(parents=True, exist_ok=True)
-    CODEX_SKILL.parent.mkdir(parents=True, exist_ok=True)
-    CURSOR_SKILL.write_text(skill_body, encoding="utf-8")
-    CODEX_SKILL.write_text(skill_body, encoding="utf-8")
-
-    refs_cursor = CURSOR_SKILL.parent / "references"
-    refs_codex = CODEX_SKILL.parent / "references"
-    for target in (refs_cursor, refs_codex):
-        if target.exists():
-            shutil.rmtree(target)
+    install_targets = [CURSOR_SKILL, AGENTS_SKILL, CODEX_SKILL]
+    for skill_path in install_targets:
+        skill_path.parent.mkdir(parents=True, exist_ok=True)
+        skill_path.write_text(skill_body, encoding="utf-8")
+        refs_target = skill_path.parent / "references"
+        if refs_target.exists():
+            shutil.rmtree(refs_target)
         shutil.copytree(
             REPO_ROOT / "skills" / "leaping-marie" / "references",
-            target,
+            refs_target,
         )
+
+    print(f"Built {CURSOR_SKILL.relative_to(REPO_ROOT)} (local, gitignored)")
+    print(f"Built {AGENTS_SKILL.relative_to(REPO_ROOT)} (committed — Cursor discovers this)")
+    print(f"Built {CODEX_SKILL.relative_to(REPO_ROOT)} (local, gitignored)")
 
     pack_parts = [
         "# Leaping AI + Marie — knowledge pack\n",
@@ -76,8 +78,6 @@ def main() -> int:
             pack_parts.append(f"\n---\n\n{md_path.read_text(encoding='utf-8')}\n")
     CHATGPT_PACK.write_text("".join(pack_parts), encoding="utf-8")
 
-    print(f"Built {CURSOR_SKILL.relative_to(REPO_ROOT)}")
-    print(f"Built {CODEX_SKILL.relative_to(REPO_ROOT)}")
     print(f"Built {CHATGPT_PACK.relative_to(REPO_ROOT)} ({len(docs)} docs)")
     return 0
 

@@ -27,18 +27,28 @@ Extracted markdown: `references/extracted/*.md`
 
 ## 3. Cursor
 
-Canonical skill: `skills/leaping-marie/SKILL.md` (in git).
+**Committed path (works after `git pull` — no build required):**
 
-After build, copies land at `.cursor/skills/leaping-marie/SKILL.md` (local only, gitignored).
+`.agents/skills/leaping-marie/SKILL.md`
 
-- Auto: agent applies when task mentions Leaping, Marie, MCP, stages, telephony
-- Manual: `/leaping-marie` or `@leaping-marie`
-
-Copy to global skills (all projects):
+**Install / refresh:**
 
 ```bash
-cp -R .cursor/skills/leaping-marie ~/.cursor/skills/
+bash scripts/install-leaping-marie-skill.sh
+# optional: all projects on your Mac
+bash scripts/install-leaping-marie-skill.sh --global
 ```
+
+**Find it in Cursor:**
+
+1. **File → Open Folder** → `~/pflegemittelboxmcp` (must be the repo root, not `Documents`)
+2. **Cmd+Shift+P** → `Developer: Reload Window`
+3. **Customize** (left sidebar) → **Skills** → `leaping-marie`
+4. Or Agent chat: type **`/leaping`** and pick `leaping-marie`
+
+If still missing: run with `--global`, reload window, open a **new** Agent chat.
+
+Local copies (gitignored): `.cursor/skills/leaping-marie/`
 
 ## 4. Codex
 
@@ -75,6 +85,16 @@ When unsure about Leaping UI or API, say so — do not guess.
 ## 6. Re-sync after new PDFs
 
 Re-copy PDFs → run ingest + build → re-upload `CHATGPT_KNOWLEDGE_PACK.md` to ChatGPT.
+
+If `git pull` fails with “untracked working tree files would be overwritten” for `.codex/`:
+
+```bash
+rm -rf .codex/skills/leaping-marie
+git pull origin cursor/leaping-marie-skill-6983
+python3 scripts/build-leaping-marie-skill.py
+```
+
+`.codex/` and `.cursor/` are local build output — not committed to git.
 
 ## 7. Without PDFs in git
 
