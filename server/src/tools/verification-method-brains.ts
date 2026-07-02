@@ -450,6 +450,29 @@ function getSpeechInput(latestCustomerInput: string | undefined, safetyFlags: st
   return undefined;
 }
 
+function hasFreshVnrPreBirthdayNativeResult(rawInput: VerificationVnrBrainInput): boolean {
+  return (
+    (rawInput.check_insurance_number_format_result !== undefined &&
+      rawInput.check_insurance_number_format_result !== 'not_called') ||
+    (rawInput.get_customer_by_insurance_number_result !== undefined &&
+      rawInput.get_customer_by_insurance_number_result !== 'not_called')
+  );
+}
+
+function resolveVnrCustomerSpeechInput(
+  rawInput: VerificationVnrBrainInput,
+  safetyFlags: string[]
+): string | undefined {
+  let text = getSpeechInput(rawInput.latest_customer_input, safetyFlags);
+  if (text && isYesLike(text) && hasFreshVnrPreBirthdayNativeResult(rawInput)) {
+    if (!safetyFlags.includes('latest_customer_input_ignored_stale_confirmation')) {
+      safetyFlags.push('latest_customer_input_ignored_stale_confirmation');
+    }
+    return undefined;
+  }
+  return text;
+}
+
 function normalizeLookupResult(value: unknown): 'found' | 'not_found' | 'error' | 'not_called' | undefined {
   if (value === undefined || value === null) return undefined;
   if (typeof value === 'string') {
@@ -1789,7 +1812,7 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
     session.active_verification_path = 'vnr';
   }
   const extraSafetyFlags: string[] = [];
-  const latestText = getSpeechInput(rawInput.latest_customer_input, extraSafetyFlags);
+  const latestText = resolveVnrCustomerSpeechInput(rawInput, extraSafetyFlags);
 
   if (isNeukundeLike(rawInput.latest_customer_input)) {
     return finalizeGenericBrainResult(
@@ -1890,7 +1913,7 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
     if (rawInput.latest_customer_input && !input.vnr_candidate) {
       session.attempts.vnr_request_attempts += 1;
     }
-    if (rawInput.latest_customer_input && input.get_customer_by_insurance_number_result === 'found' && !birthdayMerge.value) {
+    if (latestText && input.get_customer_by_insurance_number_result === 'found' && !birthdayMerge.value) {
       session.attempts.birthday_collection_attempts += 1;
     }
   }
@@ -2078,7 +2101,7 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
 
   if (birthdayMerge.parse.status === 'impossible') {
     const say =
-      rawInput.latest_customer_input &&
+      latestText &&
       (input.get_customer_by_insurance_number_result === 'found' ||
         session?.get_customer_by_insurance_number_result === 'found')
         ? 'Ich habe das Geburtsdatum leider akustisch nicht sicher verstanden. Bitte nennen Sie es im Format Tag, Monat und Jahr.'
@@ -2123,7 +2146,7 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
   if (
     lookupFoundForBirthdayAuth &&
     !input.birthday_customer &&
-    rawInput.latest_customer_input &&
+    latestText &&
     birthdayMerge.parse.status === 'missing'
   ) {
     return finalize(makeResult('vnr', {

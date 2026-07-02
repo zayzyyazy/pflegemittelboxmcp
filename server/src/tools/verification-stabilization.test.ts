@@ -134,3 +134,19 @@ test('stabilization: vnr_raw alone resolves to candidate', () => {
   });
   assert.equal(result.next_action, 'CONFIRM_VNR');
 });
+
+test('stabilization: stale ja on lookup-result turn asks birthday normally', () => {
+  const sessionId = 'vnr-stale-ja';
+  runVerificationVnrBrain({ session_id: sessionId, latest_customer_input: 'E207064360' });
+  runVerificationVnrBrain({ session_id: sessionId, latest_customer_input: 'ja' });
+  const result = runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'ja',
+    check_insurance_number_format_result: 'valid',
+    get_customer_by_insurance_number_result: 'found',
+  });
+  assert.equal(result.next_action, 'ASK_BIRTHDAY');
+  assert.match(result.say, /Geburtsdatum/);
+  assert.ok(result.safety_flags.includes('latest_customer_input_ignored_stale_confirmation'));
+  assert.ok(!result.safety_flags.includes('birthday_parse_failed'));
+});
