@@ -36,6 +36,9 @@ import {
   coerceVerificationBrainInput,
   runVerificationBrain,
 } from '../tools/verification-brain.js';
+import {
+  toLeapingLegacyCoreResponse,
+} from '../tools/verification-brain-response.js';
 
 export function sanitizeGuardrailInput(input: Record<string, unknown>) {
   const nullableString = (value: unknown): string | null => {
@@ -318,11 +321,17 @@ export async function runDashboardTool(name: string, input: Record<string, unkno
     } else if (name === 'pmb_verification_method_router') {
       output = runVerificationMethodRouter(coerceVerificationMethodRouterInput(input));
     } else if (name === 'pmb_verification_phone_brain') {
-      output = runVerificationPhoneBrain(coerceVerificationPhoneBrainInput(input));
+      output = toLeapingLegacyCoreResponse(
+        runVerificationPhoneBrain(coerceVerificationPhoneBrainInput(input))
+      );
     } else if (name === 'pmb_verification_address_brain') {
-      output = runVerificationAddressBrain(coerceVerificationAddressBrainInput(input));
+      output = toLeapingLegacyCoreResponse(
+        runVerificationAddressBrain(coerceVerificationAddressBrainInput(input))
+      );
     } else if (name === 'pmb_verification_vnr_brain') {
-      output = runVerificationVnrBrain(coerceVerificationVnrBrainInput(input));
+      output = toLeapingLegacyCoreResponse(
+        runVerificationVnrBrain(coerceVerificationVnrBrainInput(input))
+      );
     } else if (name === 'pmb_verification_brain') {
       output = runVerificationBrain(coerceVerificationBrainInput(input));
     } else if (name === 'pmb_delivery_status_reasoner') {
