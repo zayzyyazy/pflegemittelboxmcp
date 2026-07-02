@@ -8,6 +8,7 @@ export const LEAPING_MCP_TOOL_NAMES = [
   'pmb_verification_address_brain',
   'pmb_verification_vnr_brain',
   'pmb_delivery_status_reasoner',
+  'pmb_post_call_email_notifier',
 ] as const;
 
 export type LeapingMcpToolName = (typeof LEAPING_MCP_TOOL_NAMES)[number];
@@ -134,6 +135,29 @@ export const LEAPING_MCP_TOOLS: McpToolDefinition[] = [
         requested_month: { type: 'string' },
         now: { type: 'string' },
         vip: { type: 'boolean' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'pmb_post_call_email_notifier',
+    description:
+      'Runs post-call alert detection, formats a human-readable email, and sends it when an alert is required.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        call_id: { type: 'string' },
+        call_date: { type: 'string' },
+        duration_seconds: { type: 'number' },
+        call_status: { type: 'string' },
+        authenticated: { type: 'boolean' },
+        verification_successful: { type: 'boolean' },
+        transcript_text: { type: 'string' },
+        function_calls: { type: 'array' },
+        transitions: { type: 'array' },
+        detected_events: { type: 'object' },
+        to_email: { type: 'string' },
+        dry_run: { type: 'boolean' },
       },
       required: [],
     },

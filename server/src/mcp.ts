@@ -8,7 +8,12 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { z } from 'zod';
+import { appConfig } from './config.js';
 import { runDeliveryStatusReasoner } from './tools/delivery-status-reasoner.js';
+import {
+  coercePostCallEmailNotifierInput,
+  runPostCallEmailNotifier,
+} from './tools/post-call-email-notifier.js';
 import {
   coerceVerificationMethodRouterInput,
   runVerificationMethodRouter,
@@ -219,6 +224,71 @@ export function createMcpServer(): McpServer {
       const start = Date.now();
       const result = runDeliveryStatusReasoner(input);
       logCall('pmb_delivery_status_reasoner', input, result, null, Date.now() - start);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'pmb_post_call_email_notifier',
+    'Runs the post-call alert detector, normalizes the result into a human-readable email, and sends it when an alert is required.',
+    {
+      call_id: z.string().optional(),
+      call_date: z.string().optional(),
+      duration_seconds: z.number().optional(),
+      call_status: z.enum(['completed', 'failed', 'transferred', 'dropped', 'unknown']).optional(),
+      authenticated: z.boolean().optional(),
+      verification_successful: z.boolean().optional(),
+      transcript_text: z.string().optional(),
+      function_calls: z
+        .array(
+          z.object({
+            name: z.string(),
+            arguments: z.unknown().optional(),
+            result: z.unknown().optional(),
+            error: z.string().optional(),
+            timestamp: z.string().optional(),
+          })
+        )
+        .optional(),
+      transitions: z
+        .array(
+          z.object({
+            from: z.string().optional(),
+            to: z.string().optional(),
+            timestamp: z.string().optional(),
+          })
+        )
+        .optional(),
+      detected_events: z
+        .object({
+          customer_frustrated: z.boolean().optional(),
+          customer_requested_human: z.boolean().optional(),
+          technical_issue_mentioned: z.boolean().optional(),
+          repeated_birthday_requests: z.number().optional(),
+          repeated_vnr_requests: z.number().optional(),
+          repeated_address_requests: z.number().optional(),
+          silence_or_dead_air: z.boolean().optional(),
+        })
+        .optional(),
+      to_email: z.string().optional(),
+      dry_run: z.boolean().optional(),
+    },
+    async (input) => {
+      const start = Date.now();
+      const result = await runPostCallEmailNotifier(coercePostCallEmailNotifierInput(input), {
+        provider: appConfig.ALERT_EMAIL_PROVIDER,
+        apiKey: appConfig.RESEND_API_KEY,
+        from: appConfig.ALERT_EMAIL_FROM,
+        defaultTo: appConfig.ALERT_EMAIL_TO,
+        subjectPrefix: appConfig.ALERT_EMAIL_SUBJECT_PREFIX,
+        gmailUser: appConfig.GMAIL_SMTP_USER,
+        gmailAppPassword: appConfig.GMAIL_SMTP_APP_PASSWORD,
+        llmEnabled: appConfig.ALERT_EMAIL_LLM_ENABLED,
+        openaiApiKey: appConfig.OPENAI_API_KEY,
+        openaiModel: appConfig.OPENAI_MODEL,
+        openaiBaseUrl: appConfig.OPENAI_BASE_URL,
+      });
+      logCall('pmb_post_call_email_notifier', input, result, null, Date.now() - start);
       return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
     }
   );

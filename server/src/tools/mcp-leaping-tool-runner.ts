@@ -1,8 +1,13 @@
 import { logCall } from '../db.js';
+import { appConfig } from '../config.js';
 import {
   coerceDeliveryStatusReasonerInput,
   runDeliveryStatusReasoner,
 } from './delivery-status-reasoner.js';
+import {
+  coercePostCallEmailNotifierInput,
+  runPostCallEmailNotifier,
+} from './post-call-email-notifier.js';
 import {
   coerceVerificationMethodRouterInput,
   runVerificationMethodRouter,
@@ -71,6 +76,25 @@ export async function runLeapingMcpTool(
     case 'pmb_delivery_status_reasoner': {
       const input = coerceDeliveryStatusReasonerInput(args);
       const result = runDeliveryStatusReasoner(input);
+      logCall(name, input, result, null, Date.now() - start);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+
+    case 'pmb_post_call_email_notifier': {
+      const input = coercePostCallEmailNotifierInput(args);
+      const result = await runPostCallEmailNotifier(input, {
+        provider: appConfig.ALERT_EMAIL_PROVIDER,
+        apiKey: appConfig.RESEND_API_KEY,
+        from: appConfig.ALERT_EMAIL_FROM,
+        defaultTo: appConfig.ALERT_EMAIL_TO,
+        subjectPrefix: appConfig.ALERT_EMAIL_SUBJECT_PREFIX,
+        gmailUser: appConfig.GMAIL_SMTP_USER,
+        gmailAppPassword: appConfig.GMAIL_SMTP_APP_PASSWORD,
+        llmEnabled: appConfig.ALERT_EMAIL_LLM_ENABLED,
+        openaiApiKey: appConfig.OPENAI_API_KEY,
+        openaiModel: appConfig.OPENAI_MODEL,
+        openaiBaseUrl: appConfig.OPENAI_BASE_URL,
+      });
       logCall(name, input, result, null, Date.now() - start);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }

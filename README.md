@@ -83,6 +83,7 @@ These are the only tools Marie discovers after MCP reconnect:
 | `pmb_verification_address_brain` | Address fallback verification step controller |
 | `pmb_verification_vnr_brain` | VNR verification step controller |
 | `pmb_delivery_status_reasoner` | Delivery-status answer helper (post-ident stages) |
+| `pmb_post_call_email_notifier` | Post-call alert email (post-conversation stage) |
 
 After deploy: disconnect and reconnect the MCP server in Leaping to refresh `tools/list`.
 
@@ -96,8 +97,7 @@ Not exposed to Leaping — still available in the dev dashboard for manual testi
 | `pmb_address_verification_guardrail` | Legacy address parser (superseded by address brain) |
 | `pmb_debug_echo_session` / `pmb_debug_echo_session_only` | Session binding smoke tests |
 | `pmb_verification_brain` | Legacy monolithic verification brain |
-| `pmb_post_call_alert_detector` | Post-call QA (background monitor) |
-| `pmb_post_call_email_notifier` | Post-call alert emails |
+| `pmb_post_call_alert_detector` | Post-call QA (background monitor; email notifier runs detection internally) |
 | `health_check` / `pmb_health_check` | Server reachability |
 
 ## Post-call monitoring and alerts
