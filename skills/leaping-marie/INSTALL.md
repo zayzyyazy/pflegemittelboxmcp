@@ -27,7 +27,9 @@ Extracted markdown: `references/extracted/*.md`
 
 ## 3. Cursor
 
-Skill is already at `.cursor/skills/leaping-marie/` after build.
+Canonical skill: `skills/leaping-marie/SKILL.md` (in git).
+
+After build, copies land at `.cursor/skills/leaping-marie/SKILL.md` (local only, gitignored).
 
 - Auto: agent applies when task mentions Leaping, Marie, MCP, stages, telephony
 - Manual: `/leaping-marie` or `@leaping-marie`

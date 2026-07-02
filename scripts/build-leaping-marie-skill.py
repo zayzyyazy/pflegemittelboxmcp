@@ -40,8 +40,13 @@ def main() -> int:
             f"- **{title}** — read `references/extracted/{slug}.md` when working on that area"
         )
 
-    template = SKILL_TEMPLATE.read_text(encoding="utf-8")
-    skill_body = template.replace("{{DOC_INDEX}}", "\n".join(doc_index_lines))
+    CANONICAL_SKILL = REPO_ROOT / "skills" / "leaping-marie" / "SKILL.md"
+    if CANONICAL_SKILL.exists():
+        skill_body = CANONICAL_SKILL.read_text(encoding="utf-8")
+        print(f"Using canonical {CANONICAL_SKILL.relative_to(REPO_ROOT)}")
+    else:
+        template = SKILL_TEMPLATE.read_text(encoding="utf-8")
+        skill_body = template.replace("{{DOC_INDEX}}", "\n".join(doc_index_lines))
 
     CURSOR_SKILL.parent.mkdir(parents=True, exist_ok=True)
     CODEX_SKILL.parent.mkdir(parents=True, exist_ok=True)
@@ -57,7 +62,10 @@ def main() -> int:
 
     pack_parts = [
         "# Leaping AI + Marie — knowledge pack\n",
-        "<!-- Generated from official Leaping PDF exports. Upload this file to ChatGPT Custom GPT knowledge. -->\n",
+        "<!-- Generated from official Leaping PDF exports. Upload to ChatGPT Custom GPT knowledge. -->\n",
+        "\n---\n\n",
+        skill_body,
+        "\n---\n\n# Extracted PDF source documents\n",
     ]
     for entry in sorted(docs, key=lambda d: d["slug"]):
         md_path = REPO_ROOT / entry["markdown"]
