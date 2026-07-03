@@ -6,10 +6,19 @@ import type {
   LlmAnalysisResult,
   IssueOwner,
 } from "./types.js";
-import { FIX, LEAPING_LLM_BRIEF, ownerLabel, isMcpBrain } from "./leaping-context.js";
+import {
+  FIX,
+  LEAPING_LLM_BRIEF,
+  ownerLabel,
+  isMcpBrain,
+  isLiveVerificationTool,
+  toolErrorOwner,
+} from "./leaping-context.js";
 
 const LONG_CALL_SECONDS = 180;
 const SHORT_DROP_SECONDS = 30;
+
+const PHONE_TOOLS = ["recognize_customer_by_phone", "get_customer_by_phone"];
 
 function pushUnique(issues: DetectedIssue[], seen: Set<string>, issue: DetectedIssue): void {
   const key = `${issue.category}:${issue.title}`;
@@ -31,6 +40,25 @@ function countFiller(text: string): number {
   return text.match(/(?:ein(en)?\s+)?moment\s+bitte/gi)?.length ?? 0;
 }
 
+function hasToolError(call: LeapingCallRecord, names: string[]): boolean {
+  return (call.function_calls ?? []).some((fc) => names.includes(fc.name) && fc.error);
+}
+
+function hasToolSuccess(call: LeapingCallRecord, names: string[]): boolean {
+  return (call.function_calls ?? []).some((fc) => names.includes(fc.name) && !fc.error);
+}
+
+function callHasFailure(call: LeapingCallRecord): boolean {
+  const status = call.call_status ?? "unknown";
+  return (
+    (call.function_calls ?? []).some((fc) => fc.error) ||
+    status === "failed" ||
+    status === "transferred" ||
+    status === "dropped" ||
+    call.verification_successful === false
+  );
+}
+
 export function detectIssues(call: LeapingCallRecord): DetectedIssue[] {
   const issues: DetectedIssue[] = [];
   const seen = new Set<string>();
@@ -38,6 +66,7 @@ export function detectIssues(call: LeapingCallRecord): DetectedIssue[] {
   const ctx = call.leaping_context;
   const duration = call.duration_seconds ?? 0;
   const status = call.call_status ?? "unknown";
+  const isClone = ctx?.is_clone_mcp ?? false;
 
   for (const fc of call.function_calls ?? []) {
     if (fc.error?.includes("Missing field value: birthday_system")) {
@@ -50,13 +79,21 @@ export function detectIssues(call: LeapingCallRecord): DetectedIssue[] {
         recommendation: FIX.birthday_binding,
       });
     } else if (fc.error) {
+      const owner = toolErrorOwner(fc.name);
+      let recommendation = FIX.birthday_binding;
+      if (isMcpBrain(fc.name)) recommendation = FIX.mcp_clone_only;
+      else if (PHONE_TOOLS.includes(fc.name)) recommendation = FIX.phone_verify;
+      else if (fc.name === "get_customer_by_insurance_number") recommendation = FIX.vnr_stt;
+      else if (fc.name === "get_customer_by_plz_geb") recommendation = FIX.address_plz;
+      else if (fc.name === "check_birthday") recommendation = FIX.birthday_binding;
+
       pushUnique(issues, seen, {
-        category: "escalation",
+        category: owner === "mcp" ? "wrong_brain" : "escalation",
         severity: "high",
-        owner: isMcpBrain(fc.name) ? "mcp" : "leaping",
+        owner,
         title: `${fc.name} Fehler`,
         detail: fc.error.slice(0, 120),
-        recommendation: isMcpBrain(fc.name) ? "MCP-Logs + Brain-Args" : FIX.birthday_binding,
+        recommendation,
       });
     }
   }
@@ -69,7 +106,7 @@ export function detectIssues(call: LeapingCallRecord): DetectedIssue[] {
       owner: "mixed",
       title: "Geburtsdatum-Loop",
       detail: `${events!.repeated_birthday_requests}×`,
-      recommendation: FIX.empty_say_filler,
+      recommendation: FIX.marie_filler,
     });
   }
   if ((events?.repeated_vnr_requests ?? 0) > 2) {
@@ -98,19 +135,70 @@ export function detectIssues(call: LeapingCallRecord): DetectedIssue[] {
       severity: "high",
       owner: "leaping",
       title: "Call failed",
-      detail: `status=failed`,
+      detail: "status=failed",
       recommendation: "Leaping call log + failed_stage",
     });
   }
 
-  if (call.phone_lookup_found === false && (ctx?.native_tools.includes("get_customer_by_phone") || /telefon/i.test(text))) {
+  const phoneAttempted =
+    ctx?.verification_path === "phone" ||
+    (ctx?.verification_tools ?? []).some((t) => PHONE_TOOLS.includes(t)) ||
+    /telefon/i.test(text);
+
+  if (hasToolError(call, PHONE_TOOLS) && phoneAttempted && !hasToolSuccess(call, PHONE_TOOLS)) {
     pushUnique(issues, seen, {
       category: "phone_path",
       severity: "high",
+      owner: "marie",
+      title: "Telefon-Erkennung fehlgeschlagen",
+      detail: "recognize_customer_by_phone ohne Treffer",
+      recommendation: FIX.phone_verify,
+    });
+  }
+
+  if (
+    !isClone &&
+    callHasFailure(call) &&
+    (ctx?.verification_tools.length ?? 0) === 0 &&
+    duration > 30
+  ) {
+    pushUnique(issues, seen, {
+      category: "wrong_brain",
+      severity: "medium",
       owner: "leaping",
-      title: "Phone-Pfad ohne Lookup",
-      detail: "phone_lookup_found=false",
-      recommendation: FIX.phone_lookup,
+      title: "Kein Verifikationstool aufgezeichnet",
+      detail: "Live-Agent: recognize/VNR/PLZ fehlt im Log",
+      recommendation: FIX.routing_live,
+    });
+  }
+
+  if (isClone && (ctx?.mcp_tools.length ?? 0) > 0 && callHasFailure(call)) {
+    const hasRouter = (ctx?.mcp_tools ?? []).includes("pmb_verification_method_router");
+    const hasBrain = (ctx?.mcp_tools ?? []).some(
+      (t) => t.startsWith("pmb_verification_") && t !== "pmb_verification_method_router",
+    );
+    if (hasBrain && !hasRouter) {
+      pushUnique(issues, seen, {
+        category: "wrong_brain",
+        severity: "low",
+        owner: "mcp",
+        title: "Clone: Brain ohne method_router",
+        detail: ctx!.mcp_tools.join(", "),
+        recommendation: FIX.mcp_clone_only,
+      });
+    }
+  }
+
+  const phoneOk = hasToolSuccess(call, PHONE_TOOLS);
+  const vnrFailed = hasToolError(call, ["get_customer_by_insurance_number"]);
+  if (phoneOk && vnrFailed && (ctx?.verification_path === "vnr" || ctx?.verification_path === "unknown")) {
+    pushUnique(issues, seen, {
+      category: "wrong_brain",
+      severity: "medium",
+      owner: "leaping",
+      title: "VNR-Pfad obwohl Telefon erkannt",
+      detail: "recognize_customer_by_phone OK, danach VNR-Fehler",
+      recommendation: FIX.vnr_after_phone,
     });
   }
 
@@ -122,7 +210,7 @@ export function detectIssues(call: LeapingCallRecord): DetectedIssue[] {
         owner: "marie",
         title: "Fülltext „Moment bitte“",
         detail: `${countFiller(text)}×`,
-        recommendation: FIX.empty_say_filler,
+        recommendation: FIX.marie_filler,
       });
     }
     if (/meinten sie\s+\d{4}/i.test(text)) {
@@ -131,7 +219,7 @@ export function detectIssues(call: LeapingCallRecord): DetectedIssue[] {
         severity: "medium",
         owner: "marie",
         title: "Jahres-Rückfrage improvisiert",
-        detail: "nicht in MCP say",
+        detail: "nicht im Dialogue-Script",
         recommendation: FIX.marie_improv,
       });
     }
@@ -139,12 +227,13 @@ export function detectIssues(call: LeapingCallRecord): DetectedIssue[] {
       /versichertennummer|vnr/i.test(text) &&
       /ungültig|mehrere versuche|keine eindeutige identifikation/i.test(text)
     ) {
+      const viaClone = (ctx?.mcp_tools ?? []).includes("pmb_verification_vnr_brain");
       pushUnique(issues, seen, {
         category: "verification_loop",
         severity: "high",
-        owner: "mixed",
+        owner: viaClone ? "mcp" : "mixed",
         title: "VNR/ID fehlgeschlagen",
-        detail: ctx?.mcp_brains.includes("pmb_verification_vnr_brain") ? "vnr brain" : "summary",
+        detail: viaClone ? "clone vnr brain" : "summary/transcript",
         recommendation: FIX.vnr_stt,
       });
     }
@@ -155,23 +244,9 @@ export function detectIssues(call: LeapingCallRecord): DetectedIssue[] {
         owner: status === "transferred" ? "marie" : "leaping",
         title: "Mensch gewünscht",
         detail: status === "transferred" ? "transfer OK" : "kein transfer",
-        recommendation:
-          status === "transferred" ? FIX.transfer_ok : FIX.transfer_missing,
+        recommendation: status === "transferred" ? FIX.transfer_ok : FIX.transfer_missing,
       });
     }
-  }
-
-  const noMcp = (ctx?.mcp_brains.length ?? 0) === 0;
-  const hasNative = (ctx?.native_tools.length ?? 0) > 0;
-  if (noMcp && hasNative && duration > 60) {
-    pushUnique(issues, seen, {
-      category: "wrong_brain",
-      severity: "medium",
-      owner: "marie",
-      title: "Natives ohne MCP-Brain",
-      detail: ctx!.native_tools.join(", "),
-      recommendation: "Function nodes für pmb_verification_* brains",
-    });
   }
 
   if (
@@ -186,7 +261,7 @@ export function detectIssues(call: LeapingCallRecord): DetectedIssue[] {
       owner: "mixed",
       title: "Lang ohne Verifikation",
       detail: `${duration}s`,
-      recommendation: "Kundenident-Stage + MCP-Turns prüfen",
+      recommendation: FIX.long_no_verify,
     });
   }
 
@@ -272,7 +347,7 @@ export function buildSummary(analyses: CallAnalysis[]): ReportSummary {
 export async function enrichWithLlm(
   analyses: CallAnalysis[],
   summary: ReportSummary,
-  options: { apiKey: string; model?: string; baseUrl?: string }
+  options: { apiKey: string; model?: string; baseUrl?: string },
 ): Promise<LlmAnalysisResult | null> {
   const apiKey = options.apiKey?.trim();
   if (!apiKey) return null;
@@ -287,6 +362,8 @@ export async function enrichWithLlm(
       id: a.call.id.slice(0, 8),
       status: a.call.call_status,
       intent: a.call.leaping_context?.intent,
+      path: a.call.leaping_context?.verification_path,
+      clone: a.call.leaping_context?.is_clone_mcp,
       verdict: a.verdict,
       issues: a.issues.map((i) => `${ownerLabel(i.owner)}: ${i.title}`),
       summary: (a.call.summary_text ?? "").slice(0, 400),

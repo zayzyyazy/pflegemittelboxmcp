@@ -1,71 +1,114 @@
 /**
- * Leaping + Marie DKN context (from .codex/skills/leaping-marie).
- * Used for ownership tagging and compact issue text — not full skill dump.
+ * Live production Marie agent (Leaping Dialogue + native HTTP functions).
+ * MCP clone tools (pmb_verification_*) are detected per-call but NOT expected on live.
+ * Source: server/src/routes/api.ts, dashboard-api.ts
  */
 
 export type IssueOwner = "marie" | "leaping" | "mcp" | "mixed";
+export type VerificationPath = "phone" | "vnr" | "address" | "unknown";
+export type MarieToolKind = "verification" | "utility" | "mcp" | "other";
 
-export const MARIE_NATIVE_TOOLS = new Set([
-  "get_customer_by_phone",
+/** Live Marie verification natives — production agent */
+export const LIVE_VERIFICATION_TOOLS = new Set([
+  "recognize_customer_by_phone",
+  "clean_phone_number",
   "check_insurance_number_format",
   "get_customer_by_insurance_number",
   "get_customer_by_plz_geb",
   "check_birthday",
-  "get_now",
 ]);
 
-export const MCP_BRAIN_TOOLS = new Set([
-  "pmb_verification_method_router",
-  "pmb_verification_phone_brain",
-  "pmb_verification_address_brain",
-  "pmb_verification_vnr_brain",
-  "pmb_debug_echo_session_only",
-]);
+/** Legacy alias still seen in older Leaping configs */
+export const LEGACY_PHONE_TOOLS = new Set(["get_customer_by_phone"]);
 
-export const LEAPING_KEY_FIELDS = [
+/** Leaping template / misc — not verification logic */
+export const UTILITY_TOOLS = new Set(["get_now", "get_status"]);
+
+export const LIVE_KEY_FIELDS = [
   "intent",
-  "phone_lookup_found",
   "birthday_system",
-  "active_brain",
   "verification_successful",
+  "authenticated",
   "leaping_conversation_usecase_successful",
   "leaping_conversation_completed",
 ] as const;
 
 export interface LeapingCallContext {
   intent?: string;
-  mcp_brains: string[];
-  native_tools: string[];
+  verification_tools: string[];
+  utility_tools: string[];
+  mcp_tools: string[];
   stages: string[];
   utterances: string[];
-  /** Short timeline for LLM / report — no JSON dump */
   compact_timeline: string;
+  verification_path: VerificationPath;
+  /** true when any pmb_* tool appears — clone experiment, not live default */
+  is_clone_mcp: boolean;
+}
+
+export function classifyMarieTool(name: string): MarieToolKind {
+  if (name.startsWith("pmb_")) return "mcp";
+  if (LIVE_VERIFICATION_TOOLS.has(name) || LEGACY_PHONE_TOOLS.has(name)) return "verification";
+  if (UTILITY_TOOLS.has(name)) return "utility";
+  return "other";
+}
+
+export function inferVerificationPath(tools: string[]): VerificationPath {
+  if (tools.includes("get_customer_by_plz_geb")) return "address";
+  if (
+    tools.includes("get_customer_by_insurance_number") ||
+    tools.includes("check_insurance_number_format")
+  ) {
+    return "vnr";
+  }
+  if (tools.includes("recognize_customer_by_phone") || tools.includes("get_customer_by_phone")) {
+    return "phone";
+  }
+  return "unknown";
 }
 
 export function isMcpBrain(name: string): boolean {
-  return name.startsWith("pmb_verification_") || name.startsWith("pmb_debug_");
+  return name.startsWith("pmb_");
 }
 
-export function isMarieNative(name: string): boolean {
-  return MARIE_NATIVE_TOOLS.has(name);
+export function isLiveVerificationTool(name: string): boolean {
+  return LIVE_VERIFICATION_TOOLS.has(name) || LEGACY_PHONE_TOOLS.has(name);
+}
+
+export function isUtilityTool(name: string): boolean {
+  return UTILITY_TOOLS.has(name);
 }
 
 export function ownerLabel(owner: IssueOwner): string {
   return { marie: "Marie", leaping: "Leaping", mcp: "MCP", mixed: "Marie+Leaping" }[owner];
 }
 
+function toolErrorOwner(toolName: string): IssueOwner {
+  if (isMcpBrain(toolName)) return "mcp";
+  if (isLiveVerificationTool(toolName)) return "marie";
+  return "leaping";
+}
+
+export { toolErrorOwner };
+
 /** One-line fixes — no essay */
 export const FIX = {
-  empty_say_filler: "Kundenident-Prompt: say leer → Stille, kein Fülltext",
-  birthday_binding: "birthday_system vor check_birthday binden (nach get_customer_by_phone)",
-  phone_lookup: "phone_lookup_found nur aus get_customer_by_phone, nicht Caller-ID",
-  vnr_stt: "VNR-STT / getrennte Äußerungen → Brain nach jedem Satz",
-  marie_improv: "Nur MCP say — keine Rückfragen erfinden",
-  transfer_ok: "Transfer OK — Verifikationsschleife verkürzen",
-  transfer_missing: "Call-Transfer-Node / Junction prüfen",
-  dropped_short: "Kurz abgebrochen — oft Rufnummer/Voicemail",
+  birthday_binding: "Leaping: birthday_system aus Lookup binden vor check_birthday",
+  phone_verify: "recognize_customer_by_phone → birthday_system → check_birthday",
+  vnr_stt: "VNR: Format-Check, STT-Splitting, dann get_customer_by_insurance_number",
+  address_plz: "PLZ+Hausnr+Geburtstag an get_customer_by_plz_geb",
+  marie_improv: "Dialogue: keine Rückfragen erfinden",
+  marie_filler: "Dialogue: kein „Einen Moment“-Fülltext bei Tool-Wartezeit",
+  transfer_ok: "Transfer OK — Verifikation verkürzen (Dialogue/Prompt)",
+  transfer_missing: "Call-Transfer-Node prüfen",
+  dropped_short: "Kurz abgebrochen — Voicemail/falsche Nummer",
+  mcp_clone_only: "Clone-Agent (pmb_*) — Live nutzt native HTTP functions",
+  routing_live: "Kundenident-Stage: Verifikationstool muss feuern",
+  vnr_after_phone: "Nach Telefon-Treffer nicht in VNR-Pfad wechseln",
+  long_no_verify: "Kundenident-Stage + Dialogue-Prompt prüfen",
 } as const;
 
-export const LEAPING_LLM_BRIEF = `Marie clone = Leaping Function nodes für MCP brains + Kundenident Dialogue als Executor.
-Ownership: Marie = spricht außerhalb MCP say / natives ohne Erlaubnis. Leaping = Feldbindings, stages. MCP = Router/Brain-Logik.
-Leaping transcript = Event-Array (function, transition, field_update, speech). summary = Leaping End-Node Zusammenfassung.`;
+export const LEAPING_LLM_BRIEF = `LIVE Marie = Leaping Dialogue Kundenident + native HTTP functions (KEIN MCP auf Production).
+Verification: recognize_customer_by_phone | VNR (check_insurance_number_format→get_customer_by_insurance_number) | Adresse (get_customer_by_plz_geb) → check_birthday.
+Owner: Marie=Dialogue improvisiert / natives. Leaping=Feldbindings (birthday_system), Stages, Transfer. MCP=nur wenn pmb_* tools im transcript (Clone-Test).
+Transcript=Leaping event array; summary=End-node Zusammenfassung.`;

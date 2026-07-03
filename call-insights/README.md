@@ -2,7 +2,9 @@
 
 Export Leaping calls → rule-based + optional LLM analysis → **PDF / Markdown / JSON** report for DKN/Marie.
 
-This tool lives **outside** the MCP server on purpose: learn from real calls first, then fix Marie prompt, Leaping bindings, or MCP surgically.
+This tool lives **outside** the MCP server on purpose: learn from real calls first, then fix Marie Dialogue, Leaping bindings, or (only if needed) MCP surgically.
+
+**Production Marie** uses Leaping Dialogue + native HTTP functions (`recognize_customer_by_phone`, VNR, PLZ/Geburtstag, `check_birthday`). MCP brains (`pmb_verification_*`) are a separate clone experiment — call-insights detects them per-call but does **not** expect them on live traffic.
 
 ## Where to run
 
@@ -113,15 +115,15 @@ Normal calls that mention `check_birthday` in metadata are **OK**.
 
 | Category | Typical DKN symptom |
 |----------|---------------------|
-| `verification_loop` | *„Danke. Einen Moment bitte.“* when MCP returned empty `say` |
+| `verification_loop` | *„Danke. Einen Moment bitte.“*, VNR/Geburtstag loops |
 | `birthday_binding` | `Missing field value: birthday_system` |
-| `phone_path` | Caller ID treated as customer phone |
+| `phone_path` | `recognize_customer_by_phone` failed |
 | `stt_noise` | Merz/März, Marie inventing *„Meinten Sie 1956?“* |
-| `wrong_brain` | Wrong verification path (VNR vs address vs phone) |
-| `escalation` | Technical errors, transfers |
+| `wrong_brain` | Wrong path (VNR after phone), missing tools, clone-only MCP |
+| `escalation` | Tool errors, transfers, dropped calls |
 | `customer_confusion` | Repeated *„verstehe nicht“* |
 
-With `OPENAI_API_KEY`, the LLM adds an executive summary, **Marie vs MCP** split, and prioritized fixes.
+With `OPENAI_API_KEY`, the LLM adds an executive summary with **Marie / Leaping / MCP** ownership and prioritized fixes.
 
 ## Pivot thinking (why this exists)
 
@@ -130,9 +132,9 @@ Real DKN callers are messy: STT noise, corrections (*„Ja, aber im Merz geboren
 **Better loop:**
 
 1. **Post-call insights** (this tool) — see patterns across 50–100 calls  
-2. **Thin MCP** — router + hints, not every STT edge case  
-3. **Marie executor prompt + bindings** — minimal lines, strict `say` obedience  
-4. **Surgical MCP fixes** — only for issues the data proves
+2. **Leaping Dialogue + field bindings** — `birthday_system`, stages, transfer nodes  
+3. **Native HTTP functions** — phone/VNR/PLZ paths in Marie  
+4. **MCP clone** — only if you explicitly test `pmb_verification_*` brains
 
 ## Note on transcripts
 

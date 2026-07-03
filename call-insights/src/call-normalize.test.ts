@@ -9,14 +9,16 @@ const SAMPLE_SUMMARY =
 describe("parseLeapingTranscriptEvents", () => {
   it("parses Leaping transcript v2 event array", () => {
     const parsed = parseLeapingTranscriptEvents([
-      { type: "function", name: "pmb_verification_vnr_brain", returned: "{}", error: null },
+      { type: "function", name: "get_customer_by_insurance_number", returned: "{}", error: "not found" },
+      { type: "function", name: "get_now", returned: "{}", error: null },
       { type: "user", content: "Ich möchte kündigen." },
       { type: "end", summary: SAMPLE_SUMMARY },
     ]);
 
     assert.match(parsed.transcript_text ?? "", /user: Ich möchte kündigen/);
-    assert.ok(parsed.mcp_brains.includes("pmb_verification_vnr_brain"));
-    assert.ok(parsed.compact_timeline.includes("pmb_verification_vnr_brain"));
+    assert.ok(parsed.verification_tools.includes("get_customer_by_insurance_number"));
+    assert.ok(parsed.utility_tools.includes("get_now"));
+    assert.ok(parsed.compact_timeline.includes("get_customer_by_insurance_number ERR"));
   });
 });
 
@@ -40,7 +42,8 @@ describe("normalizeLeapingCall with transcript array", () => {
       duration_seconds: 396,
       summary: SAMPLE_SUMMARY,
       transcript: [
-        { type: "function", name: "pmb_verification_vnr_brain", error: null },
+        { type: "function", name: "get_customer_by_insurance_number", error: "not found" },
+        { type: "function", name: "get_now", error: null },
         { type: "end", summary: SAMPLE_SUMMARY },
       ],
     })!;
@@ -48,5 +51,7 @@ describe("normalizeLeapingCall with transcript array", () => {
     const analysis = analyzeCall(call);
     assert.ok(analysis.issues.some((i) => i.title.includes("VNR")));
     assert.ok(analysis.issues.some((i) => i.title.includes("Mensch")));
+    assert.equal(call.leaping_context?.verification_path, "vnr");
+    assert.equal(call.leaping_context?.is_clone_mcp, false);
   });
 });

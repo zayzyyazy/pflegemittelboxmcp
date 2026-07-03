@@ -24,7 +24,6 @@ export interface LeapingCallRecord {
   /** Leaping auto-summary (often present when utterance lines are sparse) */
   summary_text?: string;
   verification_successful?: boolean;
-  phone_lookup_found?: boolean;
   function_calls?: Array<{ name: string; error?: string }>;
   detected_events?: {
     customer_frustrated?: boolean;

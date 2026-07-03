@@ -1,5 +1,9 @@
 import type { LeapingCallRecord } from './types.js';
-import { isMcpBrain, isMarieNative } from './leaping-context.js';
+import {
+  classifyMarieTool,
+  inferVerificationPath,
+  type LeapingCallContext,
+} from './leaping-context.js';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -67,13 +71,13 @@ function mergeFields(target: JsonRecord, source: JsonRecord | null | undefined):
 
 export interface ParsedLeapingTranscript {
   transcript_text?: string;
-  /** User/agent speech only — not tool/transition lines */
   utterances: string[];
   summary_text?: string;
   function_calls: Array<{ name: string; error?: string }>;
   field_values: JsonRecord;
-  mcp_brains: string[];
-  native_tools: string[];
+  verification_tools: string[];
+  utility_tools: string[];
+  mcp_tools: string[];
   stages: string[];
   compact_timeline: string;
 }
@@ -84,8 +88,9 @@ export function parseLeapingTranscriptEvents(transcript: unknown): ParsedLeaping
     utterances: [],
     function_calls: [],
     field_values: {},
-    mcp_brains: [],
-    native_tools: [],
+    verification_tools: [],
+    utility_tools: [],
+    mcp_tools: [],
     stages: [],
     compact_timeline: '',
   };
@@ -96,8 +101,9 @@ export function parseLeapingTranscriptEvents(transcript: unknown): ParsedLeaping
 
   const timeline: string[] = [];
   const seenFunctions = new Set<string>();
+  const seenVerification = new Set<string>();
+  const seenUtility = new Set<string>();
   const seenMcp = new Set<string>();
-  const seenNative = new Set<string>();
   const seenStages = new Set<string>();
 
   for (const entry of transcript) {
@@ -129,13 +135,16 @@ export function parseLeapingTranscriptEvents(transcript: unknown): ParsedLeaping
           seenFunctions.add(key);
           result.function_calls.push({ name, error });
         }
-        if (isMcpBrain(name) && !seenMcp.has(name)) {
+        const kind = classifyMarieTool(name);
+        if (kind === "verification" && !seenVerification.has(name)) {
+          seenVerification.add(name);
+          result.verification_tools.push(name);
+        } else if (kind === "utility" && !seenUtility.has(name)) {
+          seenUtility.add(name);
+          result.utility_tools.push(name);
+        } else if (kind === "mcp" && !seenMcp.has(name)) {
           seenMcp.add(name);
-          result.mcp_brains.push(name);
-        }
-        if (isMarieNative(name) && !seenNative.has(name)) {
-          seenNative.add(name);
-          result.native_tools.push(name);
+          result.mcp_tools.push(name);
         }
         const returned = asString(event.returned);
         timeline.push(
@@ -337,8 +346,9 @@ export function normalizeLeapingCall(call: unknown): LeapingCallRecord | null {
           utterances: [],
           function_calls: [],
           field_values: {},
-          mcp_brains: [],
-          native_tools: [],
+          verification_tools: [],
+          utility_tools: [],
+          mcp_tools: [],
           stages: [],
           compact_timeline: '',
         }
@@ -364,11 +374,27 @@ export function normalizeLeapingCall(call: unknown): LeapingCallRecord | null {
 
   const functionCalls: Array<{ name: string; error?: string }> = [];
   const seenFn = new Set<string>();
-  const mcpBrains = [...parsedEvents.mcp_brains];
-  const nativeTools = [...parsedEvents.native_tools];
+  const verificationTools = [...parsedEvents.verification_tools];
+  const utilityTools = [...parsedEvents.utility_tools];
+  const mcpTools = [...parsedEvents.mcp_tools];
   const stages = [...parsedEvents.stages];
-  const seenMcp = new Set(mcpBrains);
-  const seenNative = new Set(nativeTools);
+  const seenVerification = new Set(verificationTools);
+  const seenUtility = new Set(utilityTools);
+  const seenMcp = new Set(mcpTools);
+
+  function absorbTool(name: string): void {
+    const kind = classifyMarieTool(name);
+    if (kind === "verification" && !seenVerification.has(name)) {
+      seenVerification.add(name);
+      verificationTools.push(name);
+    } else if (kind === "utility" && !seenUtility.has(name)) {
+      seenUtility.add(name);
+      utilityTools.push(name);
+    } else if (kind === "mcp" && !seenMcp.has(name)) {
+      seenMcp.add(name);
+      mcpTools.push(name);
+    }
+  }
 
   normalizeFunctionCallsFromList(record.function_calls ?? record.tool_calls, functionCalls, seenFn);
   normalizeFunctionCallsFromList(
@@ -382,17 +408,14 @@ export function normalizeLeapingCall(call: unknown): LeapingCallRecord | null {
       seenFn.add(key);
       functionCalls.push(fc);
     }
-    if (isMcpBrain(fc.name) && !seenMcp.has(fc.name)) {
-      seenMcp.add(fc.name);
-      mcpBrains.push(fc.name);
-    }
-    if (isMarieNative(fc.name) && !seenNative.has(fc.name)) {
-      seenNative.add(fc.name);
-      nativeTools.push(fc.name);
-    }
+    absorbTool(fc.name);
+  }
+  for (const fc of functionCalls) {
+    absorbTool(fc.name);
   }
 
   const intent = asString(readPath(fieldValues, ['intent']));
+  const verification_path = inferVerificationPath(verificationTools);
 
   return {
     id,
@@ -404,16 +427,18 @@ export function normalizeLeapingCall(call: unknown): LeapingCallRecord | null {
     transcript_text,
     summary_text,
     verification_successful: deriveVerificationSuccessful(record, fieldValues),
-    phone_lookup_found: asBoolean(readPath(fieldValues, ['phone_lookup_found'])),
     function_calls: functionCalls.length ? functionCalls : undefined,
     detected_events: normalizeDetectedEvents(record),
     leaping_context: {
       intent,
-      mcp_brains: mcpBrains,
-      native_tools: nativeTools,
+      verification_tools: verificationTools,
+      utility_tools: utilityTools,
+      mcp_tools: mcpTools,
       stages,
       utterances: parsedEvents.utterances,
       compact_timeline: parsedEvents.compact_timeline,
+      verification_path,
+      is_clone_mcp: mcpTools.length > 0,
     },
     raw: record,
   };
