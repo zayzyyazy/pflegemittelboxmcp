@@ -31,7 +31,7 @@ export function buildMarkdownReport(
     "# DKN Call Insights Report",
     "",
     `**Erstellt:** ${formatDate(summary.generatedAt)}`,
-    `**Anrufe:** ${summary.totalCalls} | **Fehlgeschlagen:** ${summary.failed} | **Review:** ${summary.needsReview}`,
+    `**Anrufe:** ${summary.totalCalls} | **OK:** ${summary.ok} | **Fehlgeschlagen:** ${summary.failed} | **Review:** ${summary.needsReview}`,
     "",
   ];
 
@@ -105,7 +105,7 @@ export async function writePdfReport(
     doc.fontSize(10).fillColor("#444");
     doc.text(`Erstellt: ${formatDate(summary.generatedAt)}`);
     doc.text(
-      `Anrufe: ${summary.totalCalls}  |  Fehlgeschlagen: ${summary.failed}  |  Review: ${summary.needsReview}`
+      `Anrufe: ${summary.totalCalls}  |  OK: ${summary.ok}  |  Fehlgeschlagen: ${summary.failed}  |  Review: ${summary.needsReview}`
     );
     doc.moveDown();
 

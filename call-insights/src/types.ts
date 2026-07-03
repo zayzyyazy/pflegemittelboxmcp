@@ -1,6 +1,5 @@
 export interface CallInsightsConfig {
   leapingApiBaseUrl: string;
-  /** Pasted Bearer token from Leaping UI or curl login response */
   leapingAccessToken?: string;
   leapingUsername?: string;
   leapingPassword?: string;
@@ -15,26 +14,37 @@ export interface CallInsightsConfig {
 export interface LeapingCallRecord {
   id: string;
   status: string;
+  call_status?: "completed" | "failed" | "transferred" | "dropped" | "in_progress" | "unknown";
   created_at?: string;
   ended_at?: string;
   duration_seconds?: number;
   transcript_text?: string;
   verification_successful?: boolean;
+  phone_lookup_found?: boolean;
   function_calls?: Array<{ name: string; error?: string }>;
+  detected_events?: {
+    customer_frustrated?: boolean;
+    customer_requested_human?: boolean;
+    technical_issue_mentioned?: boolean;
+    repeated_birthday_requests?: number;
+    repeated_vnr_requests?: number;
+    repeated_address_requests?: number;
+    silence_or_dead_air?: boolean;
+  };
   raw: Record<string, unknown>;
 }
 
-export type IssueSeverity = 'low' | 'medium' | 'high' | 'critical';
+export type IssueSeverity = "low" | "medium" | "high" | "critical";
 
 export type IssueCategory =
-  | 'verification_loop'
-  | 'birthday_binding'
-  | 'phone_path'
-  | 'stt_noise'
-  | 'wrong_brain'
-  | 'escalation'
-  | 'customer_confusion'
-  | 'other';
+  | "verification_loop"
+  | "birthday_binding"
+  | "phone_path"
+  | "stt_noise"
+  | "wrong_brain"
+  | "escalation"
+  | "customer_confusion"
+  | "other";
 
 export interface DetectedIssue {
   category: IssueCategory;
@@ -48,12 +58,13 @@ export interface CallAnalysis {
   call: LeapingCallRecord;
   issues: DetectedIssue[];
   score: number;
-  verdict: 'ok' | 'needs_review' | 'failed';
+  verdict: "ok" | "needs_review" | "failed";
 }
 
 export interface ReportSummary {
   generatedAt: string;
   totalCalls: number;
+  ok: number;
   failed: number;
   needsReview: number;
   topIssues: Array<{ category: string; count: number }>;

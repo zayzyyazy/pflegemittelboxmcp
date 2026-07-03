@@ -21,7 +21,7 @@ function parseArgs(argv: string[]) {
     if (arg === "--no-llm") opts.llm = false;
     else if (arg === "--no-csv") opts.csv = false;
     else if (arg.startsWith("--")) {
-      const key = arg.slice(2);
+      const key = arg.slice(2).replace(/-/g, "_");
       const val = argv[i + 1];
       if (val && !val.startsWith("--")) {
         opts[key] = val;
@@ -36,33 +36,49 @@ function parseArgs(argv: string[]) {
 
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
+  const callId = typeof opts.call_id === "string" ? opts.call_id.trim() : "";
   const days = Number(opts.days) || 7;
   const limit = Number(opts.limit) || 100;
   const outDir = String(opts.out);
   const useLlm = opts.llm !== false;
-  const exportCsv = opts.csv !== false;
+  const exportCsv = opts.csv !== false && !callId;
 
   const config = loadConfigFromEnv();
   if (typeof opts.token === "string" && opts.token.trim()) {
     config.leapingAccessToken = opts.token.trim();
   }
   assertLeapingAuthConfigured(config);
+
   const startDate = isoDateDaysAgo(days);
   const endDate = isoDateNow();
 
-  console.log(`Fetching calls ${startDate.slice(0, 10)} → ${endDate.slice(0, 10)} (limit ${limit})...`);
+  if (callId) {
+    console.log(`Fetching call ${callId}...`);
+  } else {
+    console.log(`Fetching calls ${startDate.slice(0, 10)} → ${endDate.slice(0, 10)} (limit ${limit})...`);
+  }
 
   const calls = await fetchLeapingCalls(config, {
+    callId: callId || undefined,
     startDate,
     endDate,
-    limit,
+    limit: callId ? 1 : limit,
   });
 
-  console.log(`Fetched ${calls.length} calls from Leaping API.`);
+  console.log(`Fetched ${calls.length} call(s).`);
 
   if (calls.length === 0) {
-    console.warn("No calls found. Check LEAPING_AGENT_ID, date range, and credentials.");
+    console.warn("No calls found. Check credentials, agent ID, date range, or call ID.");
     process.exit(0);
+  }
+
+  const withTranscript = calls.filter((c) => (c.transcript_text?.length ?? 0) > 0).length;
+  if (withTranscript === 0) {
+    console.warn(
+      "Warning: no transcript_text on fetched calls — issue detection will rely on tool errors and field flags only."
+    );
+  } else {
+    console.log(`${withTranscript}/${calls.length} calls have transcript text.`);
   }
 
   const analyses = analyzeCalls(calls);
@@ -84,9 +100,10 @@ async function main() {
   const reportDir = path.resolve(outDir);
   fs.mkdirSync(reportDir, { recursive: true });
 
-  const pdfPath = path.join(reportDir, `dkn-call-insights-${stamp}.pdf`);
-  const mdPath = path.join(reportDir, `dkn-call-insights-${stamp}.md`);
-  const jsonPath = path.join(reportDir, `dkn-call-insights-${stamp}.json`);
+  const suffix = callId ? `call-${callId.slice(0, 8)}-${stamp}` : stamp;
+  const pdfPath = path.join(reportDir, `dkn-call-insights-${suffix}.pdf`);
+  const mdPath = path.join(reportDir, `dkn-call-insights-${suffix}.md`);
+  const jsonPath = path.join(reportDir, `dkn-call-insights-${suffix}.json`);
 
   await writePdfReport(pdfPath, summary, analyses, llm);
   writeMarkdownReport(mdPath, summary, analyses, llm);
@@ -108,7 +125,7 @@ async function main() {
   console.log(`  MD:   ${mdPath}`);
   console.log(`  JSON: ${jsonPath}`);
   console.log(
-    `\nSummary: ${summary.failed} failed, ${summary.needsReview} need review` +
+    `\nSummary: ${summary.ok} ok, ${summary.failed} failed, ${summary.needsReview} need review` +
       (summary.topIssues[0]
         ? `, top issue: ${summary.topIssues[0].category} (${summary.topIssues[0].count}x)`
         : "")

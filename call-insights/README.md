@@ -88,10 +88,24 @@ Reports land in `call-insights/reports/`:
 ## CLI options
 
 ```bash
-npm run report -- --days 14 --limit 200 --out ./my-reports
+npm run report -- --days 14 --limit 60 --out ./my-reports
+npm run report -- --call-id YOUR-CALL-UUID
 npm run report -- --no-llm          # skip OpenAI
 npm run report -- --no-csv          # skip CSV export
 ```
+
+## How issue detection works (v2)
+
+Issues are **not** scraped from raw JSON metadata (that caused 100/100 false `birthday_binding` flags).
+
+| Signal | Example |
+|--------|---------|
+| Tool **error** text | `Missing field value: birthday_system` |
+| **Transcript** patterns | „Einen Moment bitte“, „Meinten Sie 1956?“ |
+| Leaping `detected_events` | `repeated_birthday_requests > 2` |
+| Outcome flags | `verification_successful=false`, call `failed`/`dropped`, long call without verify |
+
+Normal calls that mention `check_birthday` in metadata are **OK**.
 
 ## What it detects (rule-based)
 

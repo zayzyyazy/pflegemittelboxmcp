@@ -1,83 +1,10 @@
 import type { CallInsightsConfig, LeapingCallRecord } from './types.js';
+import { normalizeLeapingCall } from './call-normalize.js';
+
+export { normalizeLeapingCall } from './call-normalize.js';
 
 let cachedToken: string | null = null;
 let cachedTokenExpiresAt = 0;
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
-function asString(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined;
-  const t = value.trim();
-  return t || undefined;
-}
-
-function asBoolean(value: unknown): boolean | undefined {
-  if (typeof value === 'boolean') return value;
-  if (value === 'true') return true;
-  if (value === 'false') return false;
-  return undefined;
-}
-
-function readPath(record: Record<string, unknown>, keys: string[]): unknown {
-  for (const key of keys) {
-    if (record[key] !== undefined && record[key] !== null) return record[key];
-  }
-  return undefined;
-}
-
-function deriveDuration(record: Record<string, unknown>): number | undefined {
-  const direct = readPath(record, ['duration_seconds', 'duration']);
-  if (typeof direct === 'number' && Number.isFinite(direct)) return Math.round(direct);
-  const started = asString(readPath(record, ['started_at', 'created_at']));
-  const ended = asString(readPath(record, ['ended_at', 'completed_at', 'updated_at']));
-  if (!started || !ended) return undefined;
-  const ms = Date.parse(ended) - Date.parse(started);
-  if (!Number.isFinite(ms) || ms < 0) return undefined;
-  return Math.round(ms / 1000);
-}
-
-export function normalizeLeapingCall(call: unknown): LeapingCallRecord | null {
-  const record = asRecord(call);
-  if (!record) return null;
-  const id = asString(readPath(record, ['id', 'call_id']));
-  if (!id) return null;
-  const status = asString(readPath(record, ['status', 'call_status'])) ?? 'unknown';
-  const functionCallsRaw = record.function_calls ?? record.tool_calls;
-  const function_calls = Array.isArray(functionCallsRaw)
-    ? functionCallsRaw
-        .map((item) => {
-          const fc = asRecord(item);
-          if (!fc) return null;
-          const name = asString(readPath(fc, ['name', 'function_name', 'tool_name']));
-          if (!name) return null;
-          return {
-            name,
-            error: asString(readPath(fc, ['error', 'error_message'])),
-          };
-        })
-        .filter((x): x is { name: string; error?: string } => x !== null)
-    : undefined;
-
-  return {
-    id,
-    status,
-    created_at: asString(readPath(record, ['created_at', 'started_at', 'call_date'])),
-    ended_at: asString(readPath(record, ['ended_at', 'completed_at'])),
-    duration_seconds: deriveDuration(record),
-    transcript_text: asString(
-      readPath(record, ['transcript_text', 'transcript', 'transcript_content'])
-    ),
-    verification_successful: asBoolean(
-      readPath(record, ['verification_successful', 'verified', 'authenticated'])
-    ),
-    function_calls,
-    raw: record,
-  };
-}
 
 async function loginWithPassword(config: CallInsightsConfig): Promise<string> {
   const body = new URLSearchParams({
@@ -126,16 +53,57 @@ export async function getLeapingAccessToken(config: CallInsightsConfig): Promise
 }
 
 export interface FetchCallsOptions {
-  startDate: string;
-  endDate: string;
+  startDate?: string;
+  endDate?: string;
   limit?: number;
   status?: string;
+  callId?: string;
+}
+
+async function fetchCallsPage(
+  config: CallInsightsConfig,
+  token: string,
+  query: URLSearchParams
+): Promise<LeapingCallRecord[]> {
+  const response = await fetch(`${config.leapingApiBaseUrl}/calls/?${query.toString()}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const body = (await response.json().catch(() => ({}))) as {
+    calls?: unknown[];
+    message?: string;
+  };
+  if (!response.ok) {
+    throw new Error(body.message ?? `Leaping get calls failed (${response.status})`);
+  }
+
+  return (body.calls ?? [])
+    .map(normalizeLeapingCall)
+    .filter((c): c is LeapingCallRecord => c !== null);
+}
+
+export async function fetchLeapingCallById(
+  config: CallInsightsConfig,
+  callId: string
+): Promise<LeapingCallRecord | null> {
+  const token = await getLeapingAccessToken(config);
+  const query = new URLSearchParams({
+    agent_id: config.leapingAgentId,
+    id: callId,
+    limit: '1',
+  });
+  const calls = await fetchCallsPage(config, token, query);
+  return calls[0] ?? null;
 }
 
 export async function fetchLeapingCalls(
   config: CallInsightsConfig,
   options: FetchCallsOptions
 ): Promise<LeapingCallRecord[]> {
+  if (options.callId) {
+    const single = await fetchLeapingCallById(config, options.callId);
+    return single ? [single] : [];
+  }
+
   const token = await getLeapingAccessToken(config);
   const maxCalls = options.limit ?? 100;
   const pageSize = Math.min(maxCalls, 100);
@@ -145,29 +113,15 @@ export async function fetchLeapingCalls(
   while (all.length < maxCalls) {
     const query = new URLSearchParams({
       agent_id: config.leapingAgentId,
-      start_date: options.startDate,
-      end_date: options.endDate,
       limit: String(Math.min(pageSize, maxCalls - all.length)),
       offset: String(offset),
       order_by: 'ended_at',
     });
+    if (options.startDate) query.set('start_date', options.startDate);
+    if (options.endDate) query.set('end_date', options.endDate);
     if (options.status) query.set('status', options.status);
 
-    const response = await fetch(`${config.leapingApiBaseUrl}/calls/?${query.toString()}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const body = (await response.json().catch(() => ({}))) as {
-      calls?: unknown[];
-      message?: string;
-    };
-    if (!response.ok) {
-      throw new Error(body.message ?? `Leaping get calls failed (${response.status})`);
-    }
-
-    const batch = (body.calls ?? [])
-      .map(normalizeLeapingCall)
-      .filter((c): c is LeapingCallRecord => c !== null);
-
+    const batch = await fetchCallsPage(config, token, query);
     all.push(...batch);
     if (batch.length < Number(query.get('limit'))) break;
     offset += batch.length;
@@ -181,6 +135,8 @@ export async function exportLeapingCallsCsv(
   options: FetchCallsOptions
 ): Promise<string> {
   const token = await getLeapingAccessToken(config);
+  const startDate = options.startDate ?? new Date(Date.now() - 7 * 86400000).toISOString();
+  const endDate = options.endDate ?? new Date().toISOString();
   const response = await fetch(`${config.leapingApiBaseUrl}/calls/export`, {
     method: 'POST',
     headers: {
@@ -190,8 +146,9 @@ export async function exportLeapingCallsCsv(
     body: JSON.stringify({
       agent_id: config.leapingAgentId,
       filters: {
-        start_datetime: options.startDate,
-        end_datetime: options.endDate,
+        start_datetime: startDate,
+        end_datetime: endDate,
+        ...(options.callId ? { id: options.callId } : {}),
         ...(options.status ? { status: options.status } : {}),
       },
     }),
