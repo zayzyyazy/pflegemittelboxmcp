@@ -17,6 +17,7 @@ export interface VerificationPhoneBrainInput {
   check_birthday_result?: 'success' | 'failed' | 'error' | 'not_called';
   check_birthday_error?: string;
   birthday_system_available?: boolean;
+  birthday_system?: string;
   birthday_request_count?: number;
   birthday_check_attempts?: number;
   customer_requested_human?: boolean;
@@ -48,6 +49,7 @@ export interface VerificationVnrBrainInput {
   check_birthday_result?: 'success' | 'failed' | 'error' | 'not_called';
   check_birthday_error?: string;
   birthday_system_available?: boolean;
+  birthday_system?: string;
   vnr_request_count?: number;
   vnr_lookup_attempts?: number;
   birthday_request_count?: number;
@@ -298,6 +300,8 @@ const BIRTHDAY_STT_TOKEN_REPAIRS: Record<string, string> = {
   neuzen: 'neunzehn',
   neuzhen: 'neunzehn',
   neuzehn: 'neunzehn',
+  merz: 'maerz',
+  maerz: 'maerz',
 };
 
 const BIRTHDAY_STT_PHRASE_REPAIRS: Array<[RegExp, string]> = [
@@ -453,11 +457,19 @@ function parseCompactVnr(text: string | undefined): string | undefined {
 function isYesLike(text: string | undefined): boolean {
   if (!text) return false;
   const normalized = text.toLowerCase().trim().replace(/[.!?,]+$/g, '');
+  if (/\b(aber|jedoch|eigentlich|korrektur|falsch|stimmt nicht|nicht richtig)\b/.test(normalized)) {
+    return false;
+  }
   if (YES_WORDS.some((word) => normalized === word)) return true;
   if (extractVnrLeadingLetter(text)) return false;
   return /^(ja\b|jawohl\b|das stimmt\b|stimmt\b|korrekt\b|richtig\b|genau\b|das ist (korrekt|richtig|stimmt))/.test(
     normalized
   );
+}
+
+function utteranceIsStaleBirthdayAcknowledgement(text: string | undefined): boolean {
+  if (!text || !isYesLike(text)) return false;
+  return !utteranceLooksLikeDate(text) && extractDigitRuns(text).join('').length === 0;
 }
 
 function isNoLike(text: string | undefined): boolean {
@@ -695,6 +707,34 @@ function utteranceLooksLikeDate(rawText: string | undefined): boolean {
 
 function isMissingBirthdaySystem(error: string | undefined): boolean {
   return (error ?? '').includes('Missing field value: birthday_system');
+}
+
+function canCallCheckBirthday(input: {
+  birthday_system_available?: boolean;
+  birthday_system?: string;
+}): boolean {
+  if (input.birthday_system_available === false) return false;
+  if (input.birthday_system_available === true) return true;
+  if (typeof input.birthday_system === 'string' && input.birthday_system.trim()) return true;
+  return false;
+}
+
+function waitForBirthdaySystemBinding(
+  method: 'phone' | 'vnr',
+  birthday_customer: string | undefined
+): VerificationMethodBrainResult {
+  return makeResult(method, {
+    ok: true,
+    next_action: 'WAIT_FOR_BIRTHDAY_SYSTEM',
+    say: '',
+    reason:
+      'Birthday is ready but birthday_system is not bound yet; Leaping must populate birthday_system before check_birthday.',
+    missing_fields: ['birthday_system'],
+    safety_flags: ['birthday_system_binding_required'],
+    known_values_required_next_call: birthday_customer
+      ? { birthday_customer, birthday_system: 'required' }
+      : { birthday_system: 'required' },
+  });
 }
 
 function normalizeBooleanAlias(value: unknown): boolean | undefined {
@@ -1543,6 +1583,24 @@ function parseAddressCorrectionsFromUtterance(
   return patch;
 }
 
+function parseMonthOnlyCorrection(rawText: string, existing: string): string | undefined {
+  if (!hasCompleteIsoBirthday(existing)) return undefined;
+  const tokens = tokenize(preprocessBirthdaySpeech(rawText));
+  let month: number | undefined;
+  for (const token of tokens) {
+    const parsedMonth = parseMonthToken(token.normalized);
+    if (parsedMonth !== undefined) {
+      month = parsedMonth;
+      break;
+    }
+  }
+  if (month === undefined) return undefined;
+  const day = Number(existing.slice(8, 10));
+  const year = Number(existing.slice(0, 4));
+  const iso = toIsoDate(day, month, year);
+  return iso && iso !== existing ? iso : undefined;
+}
+
 function mergeBirthdayForAddressCorrection(
   existing: string | undefined,
   rawText: string,
@@ -1578,6 +1636,21 @@ function mergeBirthdayForAddressCorrection(
   }
 
   if (existing && hasCompleteIsoBirthday(existing)) {
+    const monthOnly = parseMonthOnlyCorrection(rawText, existing);
+    if (monthOnly) {
+      return {
+        value: monthOnly,
+        parse: {
+          status: 'complete',
+          iso: monthOnly,
+          day: Number(monthOnly.slice(8, 10)),
+          month: Number(monthOnly.slice(5, 7)),
+          year: Number(monthOnly.slice(0, 4)),
+        },
+        corrected: true,
+      };
+    }
+
     const existingMonth = Number(existing.slice(5, 7));
     const existingDay = Number(existing.slice(8, 10));
     const day = parsed.day ?? existingDay;
@@ -2016,6 +2089,7 @@ export function coerceVerificationPhoneBrainInput(input: Record<string, unknown>
     check_birthday_result: normalizeCheckBirthdayResult(input.check_birthday_result),
     check_birthday_error: asString(input.check_birthday_error),
     birthday_system_available: asBoolean(input.birthday_system_available),
+    birthday_system: asString(input.birthday_system),
     birthday_request_count: asNumber(input.birthday_request_count),
     birthday_check_attempts: asNumber(input.birthday_check_attempts),
     customer_requested_human: asBoolean(input.customer_requested_human),
@@ -2085,6 +2159,7 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
     ),
     check_birthday_error: rawInput.check_birthday_error ?? session?.check_birthday_error ?? undefined,
     birthday_system_available: rawInput.birthday_system_available ?? undefined,
+    birthday_system: rawInput.birthday_system ?? undefined,
     birthday_request_count: rawInput.birthday_request_count ?? session?.attempts.birthday_collection_attempts ?? 0,
     birthday_check_attempts: rawInput.birthday_check_attempts ?? session?.attempts.birthday_check_attempts ?? 0,
   };
@@ -2170,6 +2245,18 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
   }
 
   if (!input.birthday_customer) {
+    if (latestText && utteranceIsStaleBirthdayAcknowledgement(latestText)) {
+      const result = makeResult('phone', {
+        ok: true,
+        next_action: 'ASK_BIRTHDAY',
+        say: 'Bitte nennen Sie mir zur Verifizierung Ihr Geburtsdatum.',
+        reason: 'Short acknowledgement received while awaiting birthday; prompt again without treating it as a date.',
+        missing_fields: ['birthday_customer'],
+        safety_flags: ['birthday_acknowledgement_only'],
+      });
+      saveSessionState(rawInput.session_id, session ?? emptySessionState());
+      return finalizeGenericBrainResult(result, rawInput.session_id, session);
+    }
     if ((input.birthday_request_count ?? 0) >= 2) {
       return finalizeGenericBrainResult(makeResult('phone', {
         ok: false,
@@ -2266,6 +2353,11 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
       missing_fields: ['birthday_system'],
       safety_flags: ['missing_birthday_system', 'block_birthday_loop'],
     }), rawInput.session_id, session);
+  }
+  if (!canCallCheckBirthday(input)) {
+    const wait = waitForBirthdaySystemBinding('phone', input.birthday_customer);
+    saveSessionState(rawInput.session_id, session ?? emptySessionState());
+    return finalizeGenericBrainResult(wait, rawInput.session_id, session);
   }
   const result = makeResult('phone', {
     ok: true,
@@ -2768,6 +2860,24 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
       );
     }
 
+    if (addressCorrections.corrected && plzGebArgs) {
+      return finalize(
+        makeResult('address', {
+          ok: true,
+          next_action: 'CALL_GET_CUSTOMER_BY_PLZ_GEB',
+          say: '',
+          reason: 'Customer corrected stored address values during confirmation, so a fresh lookup is required.',
+          missing_fields: [],
+          safety_flags: ['address_corrected', 'never_call_check_birthday_in_address_path'],
+          function_to_call: 'get_customer_by_plz_geb',
+          function_arguments: plzGebArgs.function_arguments,
+          leaping_function_arguments: plzGebArgs.leaping_function_arguments,
+          awaiting_field: 'confirm_address',
+        }),
+        'confirm_address'
+      );
+    }
+
     if (isYesLike(latestText)) {
       if (!hasCompleteIsoBirthday(input.birthday_customer)) {
         return finalize(
@@ -2953,6 +3063,8 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
       session?.check_birthday_result
     ),
     check_birthday_error: rawInput.check_birthday_error ?? session?.check_birthday_error ?? undefined,
+    birthday_system_available: rawInput.birthday_system_available ?? undefined,
+    birthday_system: rawInput.birthday_system ?? undefined,
     vnr_request_count: rawInput.vnr_request_count ?? session?.attempts.vnr_request_attempts ?? 0,
     vnr_lookup_attempts: rawInput.vnr_lookup_attempts ?? session?.attempts.vnr_lookup_attempts ?? 0,
     birthday_request_count: rawInput.birthday_request_count ?? session?.attempts.birthday_collection_attempts ?? 0,
@@ -3304,6 +3416,22 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
     lookupFoundForBirthdayAuth &&
     !input.birthday_customer &&
     latestText &&
+    utteranceIsStaleBirthdayAcknowledgement(latestText)
+  ) {
+    return finalize(makeResult('vnr', {
+      ok: true,
+      next_action: 'ASK_BIRTHDAY',
+      say: 'Bitte nennen Sie mir zur Verifizierung Ihr Geburtsdatum.',
+      reason: 'Short acknowledgement received while awaiting birthday; prompt again without treating it as a date.',
+      missing_fields: ['birthday_customer'],
+      safety_flags: ['birthday_acknowledgement_only'],
+    }));
+  }
+
+  if (
+    lookupFoundForBirthdayAuth &&
+    !input.birthday_customer &&
+    latestText &&
     birthdayMerge.parse.status === 'missing'
   ) {
     const pendingDay = session?.pending_birthday_day;
@@ -3420,6 +3548,9 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
       missing_fields: ['birthday_system'],
       safety_flags: ['missing_birthday_system', 'block_birthday_loop'],
     }));
+  }
+  if (!canCallCheckBirthday(input)) {
+    return finalize(waitForBirthdaySystemBinding('vnr', input.birthday_customer));
   }
   const result = makeResult('vnr', {
     ok: true,

@@ -310,7 +310,10 @@ test('20. cross-path address not_found twice then VNR reuses reliable birthday f
     get_customer_by_insurance_number_result: 'found',
     birthday_system_available: true,
   });
-  const vnr = runVerificationVnrBrain({ session_id: sessionId });
+  const vnr = runVerificationVnrBrain({
+    session_id: sessionId,
+    birthday_system_available: true,
+  });
   assert.equal(vnr.next_action, 'CALL_CHECK_BIRTHDAY');
   assert.equal(vnr.stored_values?.birthday_customer, '1956-03-16');
   assert.deepEqual(vnr.function_arguments, { birthday: '1956-03-16' });
