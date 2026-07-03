@@ -14,7 +14,7 @@ function baseConfig(overrides: Partial<CallInsightsConfig> = {}): CallInsightsCo
 }
 
 describe("resolveLeapingAuthMode", () => {
-  it("prefers pasted access token", () => {
+  it("prefers login when username/password are set", () => {
     assert.equal(
       resolveLeapingAuthMode(
         baseConfig({
@@ -23,7 +23,7 @@ describe("resolveLeapingAuthMode", () => {
           leapingPassword: "secret",
         })
       ),
-      "access_token"
+      "login"
     );
   });
 

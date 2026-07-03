@@ -1,10 +1,11 @@
 import type { CallInsightsConfig } from "./types.js";
 
-export type LeapingAuthMode = "access_token" | "login" | "missing";
+export type LeapingAuthMode = "login" | "access_token" | "missing";
 
+/** Login credentials win when both are set — enables auto-refresh on 401. */
 export function resolveLeapingAuthMode(config: CallInsightsConfig): LeapingAuthMode {
-  if (config.leapingAccessToken?.trim()) return "access_token";
   if (config.leapingUsername?.trim() && config.leapingPassword?.trim()) return "login";
+  if (config.leapingAccessToken?.trim()) return "access_token";
   return "missing";
 }
 
@@ -35,8 +36,8 @@ export function assertLeapingAuthConfigured(config: CallInsightsConfig): void {
   if (mode !== "missing") return;
 
   throw new Error(
-    "Leaping auth required. Set LEAPING_ACCESS_TOKEN (Bearer from login) " +
-      "or LEAPING_API_USERNAME + LEAPING_API_PASSWORD for POST /v1/login."
+    "Leaping auth required. Prefer LEAPING_API_USERNAME + LEAPING_API_PASSWORD (auto-refresh), " +
+      "or LEAPING_ACCESS_TOKEN (expires ~15 min)."
   );
 }
 

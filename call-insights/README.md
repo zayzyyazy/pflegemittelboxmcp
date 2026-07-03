@@ -45,19 +45,20 @@ Optional query params: `start_date`, `end_date`, `status`, `offset`, `limit`, `o
 
 ### Use with this tool
 
-**Option A — paste token** (quick test):
-
-```bash
-# call-insights/.env
-LEAPING_ACCESS_TOKEN=eyJ...   # from login response or Leaping UI
-LEAPING_AGENT_ID=550e8400-...
-```
-
-**Option B — username/password** (tool calls `POST /v1/login` for you):
+**Recommended — username/password** (auto-login + refresh on 401):
 
 ```bash
 LEAPING_API_USERNAME=you@example.com
 LEAPING_API_PASSWORD=...
+LEAPING_AGENT_ID=550e8400-...
+```
+
+Tokens expire after ~15 minutes. With username/password the tool calls `POST /v1/login` before each report and **re-logins automatically** if the API returns 401.
+
+**Optional — pasted token** (one-off; expires, no refresh unless username/password also set):
+
+```bash
+LEAPING_ACCESS_TOKEN=eyJ...
 LEAPING_AGENT_ID=550e8400-...
 ```
 

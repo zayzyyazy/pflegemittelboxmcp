@@ -6,6 +6,15 @@ export { normalizeLeapingCall } from './call-normalize.js';
 let cachedToken: string | null = null;
 let cachedTokenExpiresAt = 0;
 
+function canLoginWithPassword(config: CallInsightsConfig): boolean {
+  return Boolean(config.leapingUsername?.trim() && config.leapingPassword?.trim());
+}
+
+export function clearLeapingTokenCache(): void {
+  cachedToken = null;
+  cachedTokenExpiresAt = 0;
+}
+
 async function loginWithPassword(config: CallInsightsConfig): Promise<string> {
   const body = new URLSearchParams({
     username: config.leapingUsername ?? '',
@@ -36,20 +45,65 @@ async function loginWithPassword(config: CallInsightsConfig): Promise<string> {
   return json.access_token;
 }
 
-export async function getLeapingAccessToken(config: CallInsightsConfig): Promise<string> {
+export async function getLeapingAccessToken(
+  config: CallInsightsConfig,
+  options?: { forceRefresh?: boolean }
+): Promise<string> {
+  if (options?.forceRefresh) {
+    clearLeapingTokenCache();
+  }
+
+  // Username/password → auto-refresh (preferred for repeated reports)
+  if (canLoginWithPassword(config)) {
+    if (cachedToken && cachedTokenExpiresAt > Date.now() + 30_000 && !options?.forceRefresh) {
+      return cachedToken;
+    }
+    return loginWithPassword(config);
+  }
+
   const pasted = config.leapingAccessToken?.trim();
   if (pasted) {
     return pasted;
   }
-  if (cachedToken && cachedTokenExpiresAt > Date.now() + 30_000) {
-    return cachedToken;
+
+  throw new Error(
+    'Set LEAPING_API_USERNAME + LEAPING_API_PASSWORD (auto-refresh) or LEAPING_ACCESS_TOKEN (expires ~15 min)'
+  );
+}
+
+const TOKEN_EXPIRED_HINT =
+  'Leaping token expired (401). Add LEAPING_API_USERNAME + LEAPING_API_PASSWORD to .env for auto-refresh, or paste a fresh LEAPING_ACCESS_TOKEN from POST /v1/login.';
+
+async function leapingFetch(
+  config: CallInsightsConfig,
+  url: string,
+  init: RequestInit
+): Promise<Response> {
+  let token = await getLeapingAccessToken(config);
+  let response = await fetch(url, {
+    ...init,
+    headers: {
+      ...(init.headers as Record<string, string> | undefined),
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (response.status === 401 && canLoginWithPassword(config)) {
+    token = await getLeapingAccessToken(config, { forceRefresh: true });
+    response = await fetch(url, {
+      ...init,
+      headers: {
+        ...(init.headers as Record<string, string> | undefined),
+        Authorization: `Bearer ${token}`,
+      },
+    });
   }
-  if (!config.leapingUsername?.trim() || !config.leapingPassword?.trim()) {
-    throw new Error(
-      'Set LEAPING_ACCESS_TOKEN (Bearer from POST /v1/login) or LEAPING_API_USERNAME + LEAPING_API_PASSWORD'
-    );
+
+  if (response.status === 401) {
+    throw new Error(TOKEN_EXPIRED_HINT);
   }
-  return loginWithPassword(config);
+
+  return response;
 }
 
 export interface FetchCallsOptions {
@@ -62,12 +116,13 @@ export interface FetchCallsOptions {
 
 async function fetchCallsPage(
   config: CallInsightsConfig,
-  token: string,
   query: URLSearchParams
 ): Promise<LeapingCallRecord[]> {
-  const response = await fetch(`${config.leapingApiBaseUrl}/calls/?${query.toString()}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  const response = await leapingFetch(
+    config,
+    `${config.leapingApiBaseUrl}/calls/?${query.toString()}`,
+    { method: 'GET' }
+  );
   const body = (await response.json().catch(() => ({}))) as {
     calls?: unknown[];
     message?: string;
@@ -85,13 +140,12 @@ export async function fetchLeapingCallById(
   config: CallInsightsConfig,
   callId: string
 ): Promise<LeapingCallRecord | null> {
-  const token = await getLeapingAccessToken(config);
   const query = new URLSearchParams({
     agent_id: config.leapingAgentId,
     id: callId,
     limit: '1',
   });
-  const calls = await fetchCallsPage(config, token, query);
+  const calls = await fetchCallsPage(config, query);
   return calls[0] ?? null;
 }
 
@@ -104,7 +158,6 @@ export async function fetchLeapingCalls(
     return single ? [single] : [];
   }
 
-  const token = await getLeapingAccessToken(config);
   const maxCalls = options.limit ?? 100;
   const pageSize = Math.min(maxCalls, 100);
   const all: LeapingCallRecord[] = [];
@@ -121,7 +174,7 @@ export async function fetchLeapingCalls(
     if (options.endDate) query.set('end_date', options.endDate);
     if (options.status) query.set('status', options.status);
 
-    const batch = await fetchCallsPage(config, token, query);
+    const batch = await fetchCallsPage(config, query);
     all.push(...batch);
     if (batch.length < Number(query.get('limit'))) break;
     offset += batch.length;
@@ -134,15 +187,11 @@ export async function exportLeapingCallsCsv(
   config: CallInsightsConfig,
   options: FetchCallsOptions
 ): Promise<string> {
-  const token = await getLeapingAccessToken(config);
   const startDate = options.startDate ?? new Date(Date.now() - 7 * 86400000).toISOString();
   const endDate = options.endDate ?? new Date().toISOString();
-  const response = await fetch(`${config.leapingApiBaseUrl}/calls/export`, {
+  const response = await leapingFetch(config, `${config.leapingApiBaseUrl}/calls/export`, {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       agent_id: config.leapingAgentId,
       filters: {
