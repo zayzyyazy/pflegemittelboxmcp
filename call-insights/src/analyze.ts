@@ -4,78 +4,12 @@ import type {
   CallAnalysis,
   ReportSummary,
   LlmAnalysisResult,
+  IssueOwner,
 } from "./types.js";
+import { FIX, LEAPING_LLM_BRIEF, ownerLabel, isMcpBrain } from "./leaping-context.js";
 
 const LONG_CALL_SECONDS = 180;
-
-const TRANSCRIPT_PATTERNS: Array<{
-  test: (text: string) => boolean;
-  issue: Omit<DetectedIssue, "detail"> & { detail?: string };
-}> = [
-  {
-    test: (t) => /(?:danke\.?\s*)?(?:ein(en)?\s+)?moment\s+bitte/i.test(t),
-    issue: {
-      category: "verification_loop",
-      severity: "high",
-      title: "Warteschleife / Fülltext",
-      recommendation:
-        'Marie spricht „Einen Moment bitte“ — bei leerem MCP say nur natives Tool, kein Fülltext.',
-    },
-  },
-  {
-    test: (t) => /meinten sie\s+\d{4}/i.test(t),
-    issue: {
-      category: "stt_noise",
-      severity: "medium",
-      title: "Marie erfindet Jahres-Rückfrage",
-      recommendation: "Nur MCP say vorlesen — keine improvisierten „Meinten Sie …?“-Fragen.",
-    },
-  },
-  {
-    test: (t) => /\bmerz\b/i.test(t) && !/\bmärz\b/i.test(t),
-    issue: {
-      category: "stt_noise",
-      severity: "medium",
-      title: "STT: Merz statt März",
-      recommendation: "MCP-STT-Normalisierung Merz→März; Adress-Bestätigung prüfen.",
-    },
-  },
-  {
-    test: (t) =>
-      /technisch(e?s)?\s+problem/i.test(t) ||
-      /fehler\s+aufgetreten/i.test(t) ||
-      /es tut mir leid.*problem/i.test(t),
-    issue: {
-      category: "escalation",
-      severity: "high",
-      title: "Technischer Fehler / Entschuldigung",
-      recommendation: "Ursache in Tool-Fehlern oder fehlenden Leaping-Feldern suchen.",
-    },
-  },
-  {
-    test: (t) =>
-      /versichertennummer|vnr/i.test(t) &&
-      (/ungültig|mehrere versuche|nicht.*identifiz/i.test(t) ||
-        /keine eindeutige identifikation/i.test(t)),
-    issue: {
-      category: "verification_loop",
-      severity: "high",
-      title: "VNR/Identifikation gescheitert",
-      recommendation: "VNR-STT, Retry-Limit, oder früherer Methodenwechsel (Adresse/PLZ).",
-    },
-  },
-  {
-    test: (t) =>
-      (t.match(/verstehe (ich )?nicht|habe ich nicht verstanden|was meinen sie/gi) ?? [])
-        .length >= 2,
-    issue: {
-      category: "customer_confusion",
-      severity: "medium",
-      title: "Wiederholte Kundenverwirrung",
-      recommendation: "Kürzere Sätze, eine Frage pro Turn.",
-    },
-  },
-];
+const SHORT_DROP_SECONDS = 30;
 
 function pushUnique(issues: DetectedIssue[], seen: Set<string>, issue: DetectedIssue): void {
   const key = `${issue.category}:${issue.title}`;
@@ -84,52 +18,45 @@ function pushUnique(issues: DetectedIssue[], seen: Set<string>, issue: DetectedI
   issues.push(issue);
 }
 
-function transcriptSuggestsFrustration(transcript: string): boolean {
-  const lower = transcript.toLowerCase();
-  return (
-    lower.includes("beschwer") ||
-    lower.includes("frustriert") ||
-    lower.includes("unzufrieden") ||
-    /\bmensch\b/.test(lower)
-  );
-}
-
-function countFillerMoments(transcript: string): number {
-  const matches = transcript.match(/(?:ein(en)?\s+)?moment\s+bitte/gi);
-  return matches?.length ?? 0;
-}
-
-function analysisText(call: LeapingCallRecord): string {
+function speechText(call: LeapingCallRecord): string {
   const parts: string[] = [];
-  if (call.transcript_text) parts.push(call.transcript_text);
-  if (call.summary_text && call.summary_text !== call.transcript_text) {
-    parts.push(`summary: ${call.summary_text}`);
-  }
-  return parts.join('\n');
+  const utterances = call.leaping_context?.utterances ?? [];
+  if (utterances.length) parts.push(utterances.join("\n"));
+  else if (call.transcript_text) parts.push(call.transcript_text);
+  if (call.summary_text) parts.push(call.summary_text);
+  return parts.join("\n");
+}
+
+function countFiller(text: string): number {
+  return text.match(/(?:ein(en)?\s+)?moment\s+bitte/gi)?.length ?? 0;
 }
 
 export function detectIssues(call: LeapingCallRecord): DetectedIssue[] {
   const issues: DetectedIssue[] = [];
   const seen = new Set<string>();
-  const transcript = analysisText(call);
+  const text = speechText(call);
+  const ctx = call.leaping_context;
+  const duration = call.duration_seconds ?? 0;
+  const status = call.call_status ?? "unknown";
 
   for (const fc of call.function_calls ?? []) {
     if (fc.error?.includes("Missing field value: birthday_system")) {
       pushUnique(issues, seen, {
         category: "birthday_binding",
         severity: "critical",
-        title: "birthday_system fehlt bei check_birthday",
-        detail: fc.error.slice(0, 200),
-        recommendation:
-          "Leaping: birthday_system vor check_birthday binden (get_customer_by_phone o.ä.).",
+        owner: "leaping",
+        title: "birthday_system fehlt",
+        detail: fc.error.slice(0, 120),
+        recommendation: FIX.birthday_binding,
       });
     } else if (fc.error) {
       pushUnique(issues, seen, {
         category: "escalation",
         severity: "high",
-        title: `Tool-Fehler: ${fc.name}`,
-        detail: fc.error.slice(0, 200),
-        recommendation: "Leaping-Feldbindings und MCP-Args prüfen.",
+        owner: isMcpBrain(fc.name) ? "mcp" : "leaping",
+        title: `${fc.name} Fehler`,
+        detail: fc.error.slice(0, 120),
+        recommendation: isMcpBrain(fc.name) ? "MCP-Logs + Brain-Args" : FIX.birthday_binding,
       });
     }
   }
@@ -139,131 +66,127 @@ export function detectIssues(call: LeapingCallRecord): DetectedIssue[] {
     pushUnique(issues, seen, {
       category: "verification_loop",
       severity: "high",
-      title: "Geburtsdatum mehrfach angefragt",
-      detail: `repeated_birthday_requests=${events!.repeated_birthday_requests}`,
-      recommendation: "Verifikationsschleife — MCP/Marie Turn-Logik prüfen.",
+      owner: "mixed",
+      title: "Geburtsdatum-Loop",
+      detail: `${events!.repeated_birthday_requests}×`,
+      recommendation: FIX.empty_say_filler,
     });
   }
   if ((events?.repeated_vnr_requests ?? 0) > 2) {
     pushUnique(issues, seen, {
       category: "verification_loop",
       severity: "high",
-      title: "VNR mehrfach angefragt",
-      detail: `repeated_vnr_requests=${events!.repeated_vnr_requests}`,
-      recommendation: "VNR-STT oder Retry-Limit prüfen.",
-    });
-  }
-  if ((events?.repeated_address_requests ?? 0) > 2) {
-    pushUnique(issues, seen, {
-      category: "verification_loop",
-      severity: "high",
-      title: "Adresse/PLZ mehrfach angefragt",
-      detail: `repeated_address_requests=${events!.repeated_address_requests}`,
-      recommendation: "Adress-Pfad oder Methodenwechsel prüfen.",
-    });
-  }
-  if (events?.technical_issue_mentioned) {
-    pushUnique(issues, seen, {
-      category: "escalation",
-      severity: "high",
-      title: "Technisches Problem (detected_events)",
-      detail: "technical_issue_mentioned=true",
-      recommendation: "Function-call-Fehler und Eskalationspfad prüfen.",
-    });
-  }
-  if (events?.customer_requested_human && call.call_status !== "transferred") {
-    pushUnique(issues, seen, {
-      category: "escalation",
-      severity: "high",
-      title: "Mensch gewünscht, keine Weiterleitung",
-      detail: "customer_requested_human=true",
-      recommendation: "Transfer-Pfad in Leaping prüfen.",
+      owner: "mixed",
+      title: "VNR-Loop",
+      detail: `${events!.repeated_vnr_requests}×`,
+      recommendation: FIX.vnr_stt,
     });
   }
 
-  if (call.call_status === "failed" || call.call_status === "dropped") {
+  if (status === "dropped") {
+    pushUnique(issues, seen, {
+      category: "escalation",
+      severity: duration < SHORT_DROP_SECONDS ? "low" : "medium",
+      owner: "mixed",
+      title: "Abgebrochen (dropped)",
+      detail: `${duration}s`,
+      recommendation: duration < SHORT_DROP_SECONDS ? FIX.dropped_short : "Recording anhören",
+    });
+  } else if (status === "failed") {
     pushUnique(issues, seen, {
       category: "escalation",
       severity: "high",
-      title: `Anruf ${call.call_status}`,
-      detail: `status=${call.call_status}`,
-      recommendation: "Aufzeichnung anhören; ggf. Rückruf.",
+      owner: "leaping",
+      title: "Call failed",
+      detail: `status=failed`,
+      recommendation: "Leaping call log + failed_stage",
     });
   }
 
-  if (call.phone_lookup_found === false && transcript.length > 0) {
-    const phoneBrainMentioned =
-      /telefonnummer|anrufnummer|über das telefon/i.test(transcript) &&
-      /verifiz|identifiz|bestätig/i.test(transcript);
-    if (phoneBrainMentioned) {
-      pushUnique(issues, seen, {
-        category: "phone_path",
-        severity: "high",
-        title: "Telefon-Pfad trotz fehlendem Lookup",
-        detail: "phone_lookup_found=false, Telefon-Verifikation im Gespräch",
-        recommendation:
-          "phone_lookup_found nur aus get_customer_by_phone — nicht Caller-ID als Kunden-Telefon.",
-      });
-    }
+  if (call.phone_lookup_found === false && (ctx?.native_tools.includes("get_customer_by_phone") || /telefon/i.test(text))) {
+    pushUnique(issues, seen, {
+      category: "phone_path",
+      severity: "high",
+      owner: "leaping",
+      title: "Phone-Pfad ohne Lookup",
+      detail: "phone_lookup_found=false",
+      recommendation: FIX.phone_lookup,
+    });
   }
 
-  if (transcript) {
-    if (countFillerMoments(transcript) >= 3) {
+  if (text) {
+    if (countFiller(text) >= 2) {
       pushUnique(issues, seen, {
         category: "verification_loop",
         severity: "high",
-        title: "Mehrfach „Einen Moment bitte“",
-        detail: `${countFillerMoments(transcript)}× im Transcript`,
-        recommendation: "Leeres MCP say → natives Tool ohne Füllsprache.",
+        owner: "marie",
+        title: "Fülltext „Moment bitte“",
+        detail: `${countFiller(text)}×`,
+        recommendation: FIX.empty_say_filler,
       });
     }
-
-    for (const rule of TRANSCRIPT_PATTERNS) {
-      if (rule.test(transcript)) {
-        pushUnique(issues, seen, {
-          ...rule.issue,
-          detail: rule.issue.detail ?? "Im Transcript erkannt",
-        });
-      }
-    }
-
-    if (events?.customer_frustrated || transcriptSuggestsFrustration(transcript)) {
+    if (/meinten sie\s+\d{4}/i.test(text)) {
       pushUnique(issues, seen, {
-        category: "customer_confusion",
+        category: "stt_noise",
         severity: "medium",
-        title: "Kundenfrustration",
-        detail: events?.customer_frustrated ? "customer_frustrated=true" : "Transcript-Hinweise",
-        recommendation: "Flow vereinfachen; ggf. früherer Transfer.",
+        owner: "marie",
+        title: "Jahres-Rückfrage improvisiert",
+        detail: "nicht in MCP say",
+        recommendation: FIX.marie_improv,
       });
     }
-
-    if (/menschlichen mitarbeiter|mit einem menschen|echten mitarbeiter/i.test(transcript)) {
+    if (
+      /versichertennummer|vnr/i.test(text) &&
+      /ungültig|mehrere versuche|keine eindeutige identifikation/i.test(text)
+    ) {
+      pushUnique(issues, seen, {
+        category: "verification_loop",
+        severity: "high",
+        owner: "mixed",
+        title: "VNR/ID fehlgeschlagen",
+        detail: ctx?.mcp_brains.includes("pmb_verification_vnr_brain") ? "vnr brain" : "summary",
+        recommendation: FIX.vnr_stt,
+      });
+    }
+    if (/menschlichen mitarbeiter|mit einem menschen/i.test(text)) {
       pushUnique(issues, seen, {
         category: "escalation",
-        severity: call.call_status === "transferred" ? "medium" : "high",
-        title: "Kunde wollte Mensch",
-        detail:
-          call.call_status === "transferred"
-            ? "Transfer laut Status/Summary"
-            : "Mensch-Anfrage ohne Transfer",
+        severity: status === "transferred" ? "low" : "high",
+        owner: status === "transferred" ? "marie" : "leaping",
+        title: "Mensch gewünscht",
+        detail: status === "transferred" ? "transfer OK" : "kein transfer",
         recommendation:
-          call.call_status === "transferred"
-            ? "Transfer OK — Verifikationsschleife (VNR/Adresse) vorher analysieren."
-            : "Transfer-Pfad in Leaping prüfen.",
+          status === "transferred" ? FIX.transfer_ok : FIX.transfer_missing,
       });
     }
   }
 
+  const noMcp = (ctx?.mcp_brains.length ?? 0) === 0;
+  const hasNative = (ctx?.native_tools.length ?? 0) > 0;
+  if (noMcp && hasNative && duration > 60) {
+    pushUnique(issues, seen, {
+      category: "wrong_brain",
+      severity: "medium",
+      owner: "marie",
+      title: "Natives ohne MCP-Brain",
+      detail: ctx!.native_tools.join(", "),
+      recommendation: "Function nodes für pmb_verification_* brains",
+    });
+  }
+
   if (
-    (call.duration_seconds ?? 0) >= LONG_CALL_SECONDS &&
-    call.verification_successful !== true
+    duration >= LONG_CALL_SECONDS &&
+    call.verification_successful !== true &&
+    status !== "transferred" &&
+    status !== "dropped"
   ) {
     pushUnique(issues, seen, {
       category: "verification_loop",
-      severity: "high",
-      title: "Langer Anruf ohne erfolgreiche Verifikation",
-      detail: `${call.duration_seconds}s, verification_successful=${String(call.verification_successful ?? "unknown")}`,
-      recommendation: "Schleife bei Geburtstag/Adresse/VNR — Transcript ansehen.",
+      severity: "medium",
+      owner: "mixed",
+      title: "Lang ohne Verifikation",
+      detail: `${duration}s`,
+      recommendation: "Kundenident-Stage + MCP-Turns prüfen",
     });
   }
 
@@ -271,9 +194,10 @@ export function detectIssues(call: LeapingCallRecord): DetectedIssue[] {
     pushUnique(issues, seen, {
       category: "other",
       severity: "medium",
-      title: "Verifikation nicht erfolgreich",
-      detail: `Call ${call.id}`,
-      recommendation: "Transcript und Tool-Calls in Leaping prüfen.",
+      owner: "mixed",
+      title: "Nicht verifiziert",
+      detail: call.id,
+      recommendation: "Leaping call ID öffnen",
     });
   }
 
@@ -281,26 +205,19 @@ export function detectIssues(call: LeapingCallRecord): DetectedIssue[] {
 }
 
 function scoreCall(issues: DetectedIssue[]): number {
-  if (issues.length === 0) return 0;
-  const weights = { critical: 40, high: 25, medium: 12, low: 5 };
-  return Math.min(100, issues.reduce((s, i) => s + weights[i.severity], 0));
+  if (!issues.length) return 0;
+  const w = { critical: 40, high: 25, medium: 12, low: 5 };
+  return Math.min(100, issues.reduce((s, i) => s + w[i.severity], 0));
 }
 
 export function analyzeCall(call: LeapingCallRecord): CallAnalysis {
   const issues = detectIssues(call);
   const score = scoreCall(issues);
-
   let verdict: CallAnalysis["verdict"] = "ok";
-  if (issues.some((i) => i.severity === "critical")) {
-    verdict = "failed";
-  } else if (
-    issues.filter((i) => i.severity === "high").length >= 2 ||
-    (issues.some((i) => i.severity === "high") && call.verification_successful === false)
-  ) {
-    verdict = "failed";
-  } else if (issues.length > 0) {
-    verdict = "needs_review";
-  }
+  if (issues.some((i) => i.severity === "critical")) verdict = "failed";
+  else if (issues.filter((i) => i.severity === "high").length >= 2) verdict = "failed";
+  else if (issues.some((i) => i.severity === "high" || i.severity === "medium")) verdict = "needs_review";
+  else if (issues.length) verdict = "needs_review";
 
   return { call, issues, score, verdict };
 }
@@ -312,6 +229,8 @@ export function analyzeCalls(calls: LeapingCallRecord[]): CallAnalysis[] {
 export function buildSummary(analyses: CallAnalysis[]): ReportSummary {
   const byCategory: Record<string, number> = {};
   const bySeverity: Record<string, number> = {};
+  const byOwner: Record<string, number> = {};
+  const ownerByCategory: Record<string, IssueOwner> = {};
   let failed = 0;
   let needsReview = 0;
   let ok = 0;
@@ -324,13 +243,19 @@ export function buildSummary(analyses: CallAnalysis[]): ReportSummary {
     for (const issue of a.issues) {
       byCategory[issue.category] = (byCategory[issue.category] ?? 0) + 1;
       bySeverity[issue.severity] = (bySeverity[issue.severity] ?? 0) + 1;
+      byOwner[issue.owner] = (byOwner[issue.owner] ?? 0) + 1;
+      if (!ownerByCategory[issue.category]) ownerByCategory[issue.category] = issue.owner;
     }
   }
 
   const topIssues = Object.entries(byCategory)
     .sort((a, b) => b[1] - a[1])
-    .slice(0, 8)
-    .map(([category, count]) => ({ category, count }));
+    .slice(0, 6)
+    .map(([category, count]) => ({
+      category,
+      count,
+      owner: ownerByCategory[category],
+    }));
 
   return {
     generatedAt: new Date().toISOString(),
@@ -340,6 +265,7 @@ export function buildSummary(analyses: CallAnalysis[]): ReportSummary {
     needsReview,
     topIssues,
     bySeverity,
+    byOwner,
   };
 }
 
@@ -354,39 +280,31 @@ export async function enrichWithLlm(
   const model = options.model ?? "gpt-4o-mini";
   const baseUrl = (options.baseUrl ?? "https://api.openai.com/v1").replace(/\/$/, "");
 
-  const sampleFails = analyses
+  const samples = analyses
     .filter((a) => a.verdict !== "ok")
-    .slice(0, 15)
+    .slice(0, 8)
     .map((a) => ({
-      id: a.call.id,
-      duration: a.call.duration_seconds,
+      id: a.call.id.slice(0, 8),
+      status: a.call.call_status,
+      intent: a.call.leaping_context?.intent,
       verdict: a.verdict,
-      verified: a.call.verification_successful,
-      issues: a.issues.map((i) => ({ title: i.title, detail: i.detail })),
-      excerpt: (a.call.transcript_text ?? "").slice(0, 1200),
-      tools: a.call.function_calls?.map((f) =>
-        f.error ? `${f.name} ERR:${f.error.slice(0, 80)}` : f.name
-      ),
+      issues: a.issues.map((i) => `${ownerLabel(i.owner)}: ${i.title}`),
+      summary: (a.call.summary_text ?? "").slice(0, 400),
+      timeline: (a.call.leaping_context?.compact_timeline ?? "").slice(0, 300),
     }));
 
-  const prompt = `Du bist Analyst für DKN-Pflegebox-Telefonate (Marie Voice-Agent + MCP-Verifikation).
+  const prompt = `${LEAPING_LLM_BRIEF}
 
-Daten:
-- Analysierte Anrufe: ${summary.totalCalls}
-- OK: ${summary.ok}
-- Fehlgeschlagen: ${summary.failed}
-- Review nötig: ${summary.needsReview}
-- Top-Kategorien: ${JSON.stringify(summary.topIssues)}
+Batch: ${summary.totalCalls} calls, ${summary.ok} ok, ${summary.failed} fail, ${summary.needsReview} review.
+Owners: ${JSON.stringify(summary.byOwner)}
+Top: ${JSON.stringify(summary.topIssues)}
+Samples: ${JSON.stringify(samples)}
 
-Problemanrufe (nur echte Issues, keine Metadata-False-Positives):
-${JSON.stringify(sampleFails, null, 2)}
-
-Antworte NUR mit validem JSON:
+JSON only, Deutsch, KURZ (kein Prosa):
 {
-  "executiveSummary": "2-4 Sätze auf Deutsch",
-  "biggestIssues": [{"issue": "...", "count": N, "fix": "konkrete Maßnahme"}],
-  "marieVsMcp": "Kurz: was liegt an Marie/Leaping vs MCP",
-  "recommendations": ["max 5 priorisierte Empfehlungen"]
+  "headline": "max 1 Satz",
+  "biggestIssues": [{"issue":"...","count":N,"owner":"Marie|Leaping|MCP","fix":"max 12 Wörter"}],
+  "recommendations": ["max 3 bullets, je max 15 Wörter"]
 }`;
 
   try {
@@ -398,32 +316,23 @@ Antworte NUR mit validem JSON:
       },
       body: JSON.stringify({
         model,
-        temperature: 0.2,
+        temperature: 0.1,
         response_format: { type: "json_object" },
         messages: [
-          {
-            role: "system",
-            content:
-              "Du analysierst Voice-Agent-Anrufe für Pflegemittelbox. Nur echte Probleme nennen. Antworte nur JSON.",
-          },
+          { role: "system", content: "Leaping/Marie DKN Analyst. Kurz. Nur JSON." },
           { role: "user", content: prompt },
         ],
       }),
     });
 
-    if (!res.ok) {
-      console.warn(`LLM HTTP ${res.status}: ${await res.text()}`);
-      return null;
-    }
-
+    if (!res.ok) return null;
     const data = (await res.json()) as {
       choices?: Array<{ message?: { content?: string } }>;
     };
     const content = data.choices?.[0]?.message?.content;
     if (!content) return null;
     return JSON.parse(content) as LlmAnalysisResult;
-  } catch (err) {
-    console.warn("LLM enrichment failed:", err);
+  } catch {
     return null;
   }
 }

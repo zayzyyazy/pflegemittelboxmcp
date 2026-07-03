@@ -1,4 +1,5 @@
 import type { LeapingCallRecord } from './types.js';
+import { isMcpBrain, isMarieNative } from './leaping-context.js';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -66,24 +67,38 @@ function mergeFields(target: JsonRecord, source: JsonRecord | null | undefined):
 
 export interface ParsedLeapingTranscript {
   transcript_text?: string;
+  /** User/agent speech only — not tool/transition lines */
+  utterances: string[];
   summary_text?: string;
   function_calls: Array<{ name: string; error?: string }>;
   field_values: JsonRecord;
+  mcp_brains: string[];
+  native_tools: string[];
+  stages: string[];
+  compact_timeline: string;
 }
 
 /** Leaping Calls API returns `transcript` as an event array (v2), not a plain string. */
 export function parseLeapingTranscriptEvents(transcript: unknown): ParsedLeapingTranscript {
   const result: ParsedLeapingTranscript = {
+    utterances: [],
     function_calls: [],
     field_values: {},
+    mcp_brains: [],
+    native_tools: [],
+    stages: [],
+    compact_timeline: '',
   };
 
   if (!Array.isArray(transcript)) {
     return result;
   }
 
-  const lines: string[] = [];
+  const timeline: string[] = [];
   const seenFunctions = new Set<string>();
+  const seenMcp = new Set<string>();
+  const seenNative = new Set<string>();
+  const seenStages = new Set<string>();
 
   for (const entry of transcript) {
     const event = asRecord(entry);
@@ -114,11 +129,17 @@ export function parseLeapingTranscriptEvents(transcript: unknown): ParsedLeaping
           seenFunctions.add(key);
           result.function_calls.push({ name, error });
         }
+        if (isMcpBrain(name) && !seenMcp.has(name)) {
+          seenMcp.add(name);
+          result.mcp_brains.push(name);
+        }
+        if (isMarieNative(name) && !seenNative.has(name)) {
+          seenNative.add(name);
+          result.native_tools.push(name);
+        }
         const returned = asString(event.returned);
-        lines.push(
-          error
-            ? `tool ${name} ERROR: ${error}`
-            : `tool ${name}${returned ? ` → ${returned.slice(0, 120)}` : ''}`
+        timeline.push(
+          error ? `${name} ERR` : `${name}${returned ? ' OK' : ''}`
         );
       }
       continue;
@@ -126,13 +147,17 @@ export function parseLeapingTranscriptEvents(transcript: unknown): ParsedLeaping
 
     if (type === 'function_call_request') {
       const name = asString(event.name);
-      if (name) lines.push(`tool_request ${name}`);
+      if (name) timeline.push(`→${name}?`);
       continue;
     }
 
     if (type === 'transition') {
       const to = asString(event.to_name) ?? asString(event.to);
-      if (to) lines.push(`transition → ${to}`);
+      if (to && !seenStages.has(to)) {
+        seenStages.add(to);
+        result.stages.push(to);
+        timeline.push(`stage:${to}`);
+      }
       continue;
     }
 
@@ -157,13 +182,22 @@ export function parseLeapingTranscriptEvents(transcript: unknown): ParsedLeaping
     if (utterance) {
       const role =
         asString(readPath(event, ['role', 'speaker', 'from', 'source'])) ??
-        (type.includes('user') ? 'user' : type.includes('agent') || type.includes('assistant') ? 'assistant' : type);
-      lines.push(`${role}: ${utterance}`);
+        (type.includes('user')
+          ? 'user'
+          : type.includes('agent') || type.includes('assistant')
+            ? 'agent'
+            : type);
+      const line = `${role}: ${utterance}`;
+      result.utterances.push(line);
+      if (role === 'user' || role === 'agent' || role === 'assistant') {
+        timeline.push(line.slice(0, 80));
+      }
     }
   }
 
-  if (lines.length) {
-    result.transcript_text = lines.join('\n');
+  result.compact_timeline = timeline.slice(0, 40).join(' | ');
+  if (result.utterances.length) {
+    result.transcript_text = result.utterances.join('\n');
   }
 
   return result;
@@ -298,7 +332,16 @@ export function normalizeLeapingCall(call: unknown): LeapingCallRecord | null {
   const transcriptRaw = record.transcript;
   const parsedEvents =
     typeof transcriptRaw === 'string'
-      ? { transcript_text: transcriptRaw, function_calls: [], field_values: {} }
+      ? {
+          transcript_text: transcriptRaw,
+          utterances: [],
+          function_calls: [],
+          field_values: {},
+          mcp_brains: [],
+          native_tools: [],
+          stages: [],
+          compact_timeline: '',
+        }
       : parseLeapingTranscriptEvents(transcriptRaw);
 
   mergeFields(fieldValues, parsedEvents.field_values);
@@ -309,14 +352,24 @@ export function normalizeLeapingCall(call: unknown): LeapingCallRecord | null {
     asString(readPath(fieldValues, ['leaping_conversation_summary']));
 
   const fromMessages = buildTranscriptFromMessages(record);
+  const utteranceText =
+    parsedEvents.utterances.length > 0
+      ? parsedEvents.utterances.join('\n')
+      : fromMessages;
+
   const transcript_text =
     asString(readPath(record, ['transcript_text', 'transcript_content'])) ??
-    parsedEvents.transcript_text ??
-    fromMessages ??
+    utteranceText ??
     summary_text;
 
   const functionCalls: Array<{ name: string; error?: string }> = [];
   const seenFn = new Set<string>();
+  const mcpBrains = [...parsedEvents.mcp_brains];
+  const nativeTools = [...parsedEvents.native_tools];
+  const stages = [...parsedEvents.stages];
+  const seenMcp = new Set(mcpBrains);
+  const seenNative = new Set(nativeTools);
+
   normalizeFunctionCallsFromList(record.function_calls ?? record.tool_calls, functionCalls, seenFn);
   normalizeFunctionCallsFromList(
     readNested(record, ['results'], ['function_calls']),
@@ -329,7 +382,17 @@ export function normalizeLeapingCall(call: unknown): LeapingCallRecord | null {
       seenFn.add(key);
       functionCalls.push(fc);
     }
+    if (isMcpBrain(fc.name) && !seenMcp.has(fc.name)) {
+      seenMcp.add(fc.name);
+      mcpBrains.push(fc.name);
+    }
+    if (isMarieNative(fc.name) && !seenNative.has(fc.name)) {
+      seenNative.add(fc.name);
+      nativeTools.push(fc.name);
+    }
   }
+
+  const intent = asString(readPath(fieldValues, ['intent']));
 
   return {
     id,
@@ -344,6 +407,14 @@ export function normalizeLeapingCall(call: unknown): LeapingCallRecord | null {
     phone_lookup_found: asBoolean(readPath(fieldValues, ['phone_lookup_found'])),
     function_calls: functionCalls.length ? functionCalls : undefined,
     detected_events: normalizeDetectedEvents(record),
+    leaping_context: {
+      intent,
+      mcp_brains: mcpBrains,
+      native_tools: nativeTools,
+      stages,
+      utterances: parsedEvents.utterances,
+      compact_timeline: parsedEvents.compact_timeline,
+    },
     raw: record,
   };
 }

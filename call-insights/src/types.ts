@@ -1,3 +1,5 @@
+import type { LeapingCallContext } from "./leaping-context.js";
+
 export interface CallInsightsConfig {
   leapingApiBaseUrl: string;
   leapingAccessToken?: string;
@@ -33,8 +35,11 @@ export interface LeapingCallRecord {
     repeated_address_requests?: number;
     silence_or_dead_air?: boolean;
   };
+  leaping_context?: LeapingCallContext;
   raw: Record<string, unknown>;
 }
+
+export type IssueOwner = "marie" | "leaping" | "mcp" | "mixed";
 
 export type IssueSeverity = "low" | "medium" | "high" | "critical";
 
@@ -51,6 +56,7 @@ export type IssueCategory =
 export interface DetectedIssue {
   category: IssueCategory;
   severity: IssueSeverity;
+  owner: IssueOwner;
   title: string;
   detail: string;
   recommendation: string;
@@ -69,13 +75,13 @@ export interface ReportSummary {
   ok: number;
   failed: number;
   needsReview: number;
-  topIssues: Array<{ category: string; count: number }>;
+  topIssues: Array<{ category: string; count: number; owner?: IssueOwner }>;
   bySeverity: Record<string, number>;
+  byOwner: Record<string, number>;
 }
 
 export interface LlmAnalysisResult {
-  executiveSummary: string;
-  biggestIssues: Array<{ issue: string; count: number; fix: string }>;
-  marieVsMcp: string;
+  headline: string;
+  biggestIssues: Array<{ issue: string; count: number; owner: string; fix: string }>;
   recommendations: string[];
 }

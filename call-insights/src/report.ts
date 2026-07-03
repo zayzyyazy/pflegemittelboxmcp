@@ -2,14 +2,15 @@ import fs from "node:fs";
 import path from "node:path";
 import PDFDocument from "pdfkit";
 import type { CallAnalysis, ReportSummary, LlmAnalysisResult } from "./types.js";
+import { ownerLabel } from "./leaping-context.js";
 
 const CATEGORY_LABELS: Record<string, string> = {
-  verification_loop: "Warteschleife / leerer Say",
-  birthday_binding: "Geburtsdatum / Binding",
+  verification_loop: "Verifikations-Loop",
+  birthday_binding: "birthday_system",
   phone_path: "Telefon-Pfad",
   stt_noise: "STT / Improvisation",
-  wrong_brain: "Falscher Verifikations-Pfad",
-  escalation: "Eskalation",
+  wrong_brain: "Falscher Pfad",
+  escalation: "Eskalation / Transfer",
   customer_confusion: "Kundenverwirrung",
   other: "Sonstiges",
 };
@@ -28,60 +29,65 @@ export function buildMarkdownReport(
   llm: LlmAnalysisResult | null
 ): string {
   const lines: string[] = [
-    "# DKN Call Insights Report",
+    "# DKN Call Report",
     "",
-    `**Erstellt:** ${formatDate(summary.generatedAt)}`,
-    `**Anrufe:** ${summary.totalCalls} | **OK:** ${summary.ok} | **Fehlgeschlagen:** ${summary.failed} | **Review:** ${summary.needsReview}`,
+    `${summary.totalCalls} calls · ${summary.ok} ok · ${summary.failed} fail · ${summary.needsReview} review`,
+    `Generated ${formatDate(summary.generatedAt)}`,
     "",
   ];
 
-  if (llm?.executiveSummary) {
-    lines.push("## Executive Summary", "", llm.executiveSummary, "");
+  if (llm?.headline) {
+    lines.push(`**${llm.headline}**`, "");
   }
 
-  lines.push("## Größte Problemkategorien", "");
-  const issues = llm?.biggestIssues?.length
+  lines.push("## Top issues", "");
+  const top = llm?.biggestIssues?.length
     ? llm.biggestIssues
     : summary.topIssues.map((t) => ({
         issue: CATEGORY_LABELS[t.category] ?? t.category,
         count: t.count,
+        owner: t.owner ? ownerLabel(t.owner) : "?",
         fix: "",
       }));
 
-  for (const item of issues) {
+  for (const item of top.slice(0, 6)) {
     lines.push(
-      `- **${item.issue}** (${item.count}x)${item.fix ? ` — ${item.fix}` : ""}`
+      `- **${item.issue}** (${item.count}×) · ${"owner" in item ? item.owner : "?"}${item.fix ? ` → ${item.fix}` : ""}`
     );
   }
   lines.push("");
 
-  if (llm?.marieVsMcp) {
-    lines.push("## Marie vs MCP", "", llm.marieVsMcp, "");
+  if (Object.keys(summary.byOwner).length) {
+    lines.push("## By owner", "");
+    for (const [owner, count] of Object.entries(summary.byOwner).sort((a, b) => b[1] - a[1])) {
+      lines.push(`- ${ownerLabel(owner as Parameters<typeof ownerLabel>[0])}: ${count}`);
+    }
+    lines.push("");
   }
 
   if (llm?.recommendations?.length) {
-    lines.push("## Empfehlungen", "");
-    llm.recommendations.forEach((r, i) => lines.push(`${i + 1}. ${r}`));
+    lines.push("## Actions", "");
+    llm.recommendations.slice(0, 3).forEach((r) => lines.push(`- ${r}`));
     lines.push("");
   }
 
   const worst = analyses
     .filter((a) => a.verdict !== "ok")
     .sort((a, b) => b.score - a.score)
-    .slice(0, 20);
+    .slice(0, 12);
 
-  lines.push("## Kritische Anrufe (Top 20)", "");
+  lines.push("## Calls to review", "");
   for (const a of worst) {
+    const intent = a.call.leaping_context?.intent ?? "—";
+    const topIssue = a.issues[0];
     lines.push(
-      `### ${a.call.id} — Score ${a.score} (${a.verdict})`,
-      `- Dauer: ${a.call.duration_seconds ?? "?"}s | Status: ${a.call.status}`,
-      ""
+      `- \`${a.call.id.slice(0, 8)}…\` ${a.call.call_status} ${a.call.duration_seconds ?? "?"}s · intent=${intent}`
     );
-    for (const issue of a.issues) {
-      lines.push(`- [${issue.severity}] ${issue.title}: ${issue.recommendation}`);
+    if (topIssue) {
+      lines.push(
+        `  ${ownerLabel(topIssue.owner)}: ${topIssue.title} — ${topIssue.recommendation}`
+      );
     }
-    const excerpt = (a.call.transcript_text ?? "").slice(0, 400);
-    if (excerpt) lines.push("", `> ${excerpt.replace(/\n/g, " ")}`, "");
   }
 
   return lines.join("\n");
@@ -100,68 +106,46 @@ export async function writePdfReport(
     const stream = fs.createWriteStream(outPath);
     doc.pipe(stream);
 
-    doc.fontSize(20).text("DKN Call Insights Report", { underline: true });
-    doc.moveDown();
+    doc.fontSize(18).text("DKN Call Report");
     doc.fontSize(10).fillColor("#444");
-    doc.text(`Erstellt: ${formatDate(summary.generatedAt)}`);
     doc.text(
-      `Anrufe: ${summary.totalCalls}  |  OK: ${summary.ok}  |  Fehlgeschlagen: ${summary.failed}  |  Review: ${summary.needsReview}`
+      `${summary.totalCalls} calls · ok ${summary.ok} · fail ${summary.failed} · review ${summary.needsReview}`
     );
+    doc.text(formatDate(summary.generatedAt));
     doc.moveDown();
 
-    if (llm?.executiveSummary) {
-      doc.fontSize(14).fillColor("#000").text("Executive Summary");
-      doc.fontSize(10).text(llm.executiveSummary, { align: "justify" });
+    if (llm?.headline) {
+      doc.fillColor("#000").fontSize(11).text(llm.headline);
       doc.moveDown();
     }
 
-    doc.fontSize(14).text("Größte Probleme");
-    doc.fontSize(10);
-    const top = llm?.biggestIssues?.length
-      ? llm.biggestIssues
-      : summary.topIssues.map((t) => ({
-          issue: CATEGORY_LABELS[t.category] ?? t.category,
-          count: t.count,
-          fix: "",
-        }));
-
-    for (const item of top.slice(0, 10)) {
-      doc.text(`• ${item.issue} (${item.count}x)`);
-      if (item.fix) {
-        doc.fontSize(9).fillColor("#666").text(`  → ${item.fix}`);
-        doc.fillColor("#000").fontSize(10);
-      }
-    }
-    doc.moveDown();
-
-    if (llm?.marieVsMcp) {
-      doc.fontSize(14).text("Marie vs MCP");
-      doc.fontSize(10).text(llm.marieVsMcp);
-      doc.moveDown();
-    }
-
-    if (llm?.recommendations?.length) {
-      doc.fontSize(14).text("Empfehlungen");
-      doc.fontSize(10);
-      llm.recommendations.forEach((r, i) => doc.text(`${i + 1}. ${r}`));
-      doc.moveDown();
-    }
-
-    doc.fontSize(14).text("Kritische Anrufe");
+    doc.fontSize(12).text("Top issues");
     doc.fontSize(9);
+    const top = llm?.biggestIssues ?? summary.topIssues.map((t) => ({
+      issue: CATEGORY_LABELS[t.category] ?? t.category,
+      count: t.count,
+      owner: t.owner ? ownerLabel(t.owner) : "",
+      fix: "",
+    }));
+    for (const item of top.slice(0, 6)) {
+      doc.text(`• ${item.issue} (${item.count}×) ${item.owner ?? ""}`);
+      if (item.fix) doc.text(`  ${item.fix}`, { indent: 12 });
+    }
+    doc.moveDown();
+
+    doc.fontSize(12).text("Calls to review");
+    doc.fontSize(8);
     const worst = analyses
       .filter((a) => a.verdict !== "ok")
       .sort((a, b) => b.score - a.score)
-      .slice(0, 15);
+      .slice(0, 10);
 
     for (const a of worst) {
-      if (doc.y > 700) doc.addPage();
-      doc.fontSize(11).fillColor("#000").text(`${a.call.id} — Score ${a.score}`);
-      doc.fontSize(9).fillColor("#444");
-      for (const issue of a.issues.slice(0, 4)) {
-        doc.text(`  [${issue.severity}] ${issue.title}`);
-      }
-      doc.moveDown(0.5);
+      if (doc.y > 720) doc.addPage();
+      const issue = a.issues[0];
+      doc.text(
+        `${a.call.id.slice(0, 13)}… ${a.call.call_status} ${issue ? ownerLabel(issue.owner) + ": " + issue.title : ""}`
+      );
     }
 
     doc.end();
