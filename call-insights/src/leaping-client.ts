@@ -85,6 +85,12 @@ async function loginWithPassword(config: CallInsightsConfig): Promise<string> {
     password: config.leapingPassword ?? '',
     grant_type: 'password',
   });
+  if (config.leapingClientId) {
+    body.set('client_id', config.leapingClientId);
+  }
+  if (config.leapingClientSecret) {
+    body.set('client_secret', config.leapingClientSecret);
+  }
   const response = await fetch(`${config.leapingApiBaseUrl}/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -104,14 +110,17 @@ async function loginWithPassword(config: CallInsightsConfig): Promise<string> {
 }
 
 export async function getLeapingAccessToken(config: CallInsightsConfig): Promise<string> {
-  if (config.leapingApiKey?.trim()) {
-    return config.leapingApiKey.trim();
+  const pasted = config.leapingAccessToken?.trim();
+  if (pasted) {
+    return pasted;
   }
   if (cachedToken && cachedTokenExpiresAt > Date.now() + 30_000) {
     return cachedToken;
   }
-  if (!config.leapingUsername || !config.leapingPassword) {
-    throw new Error('Set LEAPING_API_KEY or LEAPING_API_USERNAME + LEAPING_API_PASSWORD');
+  if (!config.leapingUsername?.trim() || !config.leapingPassword?.trim()) {
+    throw new Error(
+      'Set LEAPING_ACCESS_TOKEN (Bearer from POST /v1/login) or LEAPING_API_USERNAME + LEAPING_API_PASSWORD'
+    );
   }
   return loginWithPassword(config);
 }
@@ -128,29 +137,43 @@ export async function fetchLeapingCalls(
   options: FetchCallsOptions
 ): Promise<LeapingCallRecord[]> {
   const token = await getLeapingAccessToken(config);
-  const query = new URLSearchParams({
-    agent_id: config.leapingAgentId,
-    start_date: options.startDate,
-    end_date: options.endDate,
-    limit: String(options.limit ?? 100),
-    order_by: 'ended_at',
-  });
-  if (options.status) query.set('status', options.status);
+  const maxCalls = options.limit ?? 100;
+  const pageSize = Math.min(maxCalls, 100);
+  const all: LeapingCallRecord[] = [];
+  let offset = 0;
 
-  const response = await fetch(`${config.leapingApiBaseUrl}/calls/?${query.toString()}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  const body = (await response.json().catch(() => ({}))) as {
-    calls?: unknown[];
-    message?: string;
-  };
-  if (!response.ok) {
-    throw new Error(body.message ?? `Leaping get calls failed (${response.status})`);
+  while (all.length < maxCalls) {
+    const query = new URLSearchParams({
+      agent_id: config.leapingAgentId,
+      start_date: options.startDate,
+      end_date: options.endDate,
+      limit: String(Math.min(pageSize, maxCalls - all.length)),
+      offset: String(offset),
+      order_by: 'ended_at',
+    });
+    if (options.status) query.set('status', options.status);
+
+    const response = await fetch(`${config.leapingApiBaseUrl}/calls/?${query.toString()}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const body = (await response.json().catch(() => ({}))) as {
+      calls?: unknown[];
+      message?: string;
+    };
+    if (!response.ok) {
+      throw new Error(body.message ?? `Leaping get calls failed (${response.status})`);
+    }
+
+    const batch = (body.calls ?? [])
+      .map(normalizeLeapingCall)
+      .filter((c): c is LeapingCallRecord => c !== null);
+
+    all.push(...batch);
+    if (batch.length < Number(query.get('limit'))) break;
+    offset += batch.length;
   }
 
-  return (body.calls ?? [])
-    .map(normalizeLeapingCall)
-    .filter((c): c is LeapingCallRecord => c !== null);
+  return all.slice(0, maxCalls);
 }
 
 export async function exportLeapingCallsCsv(

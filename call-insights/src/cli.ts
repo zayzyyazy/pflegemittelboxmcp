@@ -2,7 +2,7 @@
 import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
-import { loadConfigFromEnv, isoDateDaysAgo, isoDateNow } from "./config.js";
+import { loadConfigFromEnv, isoDateDaysAgo, isoDateNow, assertLeapingAuthConfigured } from "./config.js";
 import { fetchLeapingCalls, exportLeapingCallsCsv } from "./leaping-client.js";
 import { analyzeCalls, buildSummary, enrichWithLlm } from "./analyze.js";
 import { writePdfReport, writeMarkdownReport } from "./report.js";
@@ -43,6 +43,10 @@ async function main() {
   const exportCsv = opts.csv !== false;
 
   const config = loadConfigFromEnv();
+  if (typeof opts.token === "string" && opts.token.trim()) {
+    config.leapingAccessToken = opts.token.trim();
+  }
+  assertLeapingAuthConfigured(config);
   const startDate = isoDateDaysAgo(days);
   const endDate = isoDateNow();
 

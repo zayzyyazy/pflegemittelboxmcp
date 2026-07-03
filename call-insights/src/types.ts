@@ -1,8 +1,11 @@
 export interface CallInsightsConfig {
   leapingApiBaseUrl: string;
-  leapingApiKey?: string;
+  /** Pasted Bearer token from Leaping UI or curl login response */
+  leapingAccessToken?: string;
   leapingUsername?: string;
   leapingPassword?: string;
+  leapingClientId?: string;
+  leapingClientSecret?: string;
   leapingAgentId: string;
   openaiApiKey?: string;
   openaiModel: string;

@@ -4,19 +4,57 @@ Export Leaping calls → rule-based + optional LLM analysis → **PDF / Markdown
 
 This tool lives **outside** the MCP server on purpose: learn from real calls first, then fix Marie prompt, Leaping bindings, or MCP surgically.
 
-## Quick start
+## Leaping auth (Bearer token, not API key)
+
+Leaping does **not** use a standalone API key. You get a **Bearer access token** from login:
+
+```bash
+# 1) Login → copy access_token from JSON response
+curl -X POST "https://api.leaping.ai/v1/login" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=YOUR_EMAIL&password=YOUR_PASSWORD&grant_type=password"
+
+# 2) Fetch calls with that token
+curl "https://api.leaping.ai/v1/calls/?agent_id=YOUR_AGENT_ID&limit=50" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
+
+Optional query params: `start_date`, `end_date`, `status`, `offset`, `limit`, `order_by`.
+
+### Use with this tool
+
+**Option A — paste token** (quick test):
+
+```bash
+# call-insights/.env
+LEAPING_ACCESS_TOKEN=eyJ...   # from login response or Leaping UI
+LEAPING_AGENT_ID=550e8400-...
+```
+
+**Option B — username/password** (tool calls `POST /v1/login` for you):
+
+```bash
+LEAPING_API_USERNAME=you@example.com
+LEAPING_API_PASSWORD=...
+LEAPING_AGENT_ID=550e8400-...
+```
 
 ```bash
 cd call-insights
 cp .env.example .env
-# Fill LEAPING_API_KEY (or username/password) + LEAPING_AGENT_ID
-# Optional: OPENAI_API_KEY for executive summary
-
 npm install
 npm run report -- --days 7 --limit 100
 ```
 
-Outputs land in `call-insights/reports/`:
+One-off token without editing `.env`:
+
+```bash
+LEAPING_ACCESS_TOKEN=eyJ... npm run report -- --days 7
+```
+
+## Outputs
+
+Reports land in `call-insights/reports/`:
 
 | File | Content |
 |------|---------|
@@ -58,10 +96,6 @@ Real DKN callers are messy: STT noise, corrections (*„Ja, aber im Merz geboren
 3. **Marie executor prompt + bindings** — minimal lines, strict `say` obedience  
 4. **Surgical MCP fixes** — only for issues the data proves
 
-## Env vars
-
-See `.env.example`. Same Leaping auth as `server/src/post-call-monitor.ts`.
-
 ## Note on transcripts
 
-Leaping CSV export **excludes full transcripts** (by design). Analysis uses API call records (`transcript_text` when present), function call errors, and field metadata. For deeper review, paste problem call IDs into Leaping UI or extend this tool with per-call detail fetch.
+Leaping CSV export **excludes full transcripts** (by design). Analysis uses API call records (`transcript_text` when present), function call errors, and field metadata.
