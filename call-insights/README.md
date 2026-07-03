@@ -66,6 +66,7 @@ cd call-insights
 cp .env.example .env
 npm install
 npm run report -- --days 7 --limit 100
+npm run report -- --call-id 06a47740-e4de-7d7c-8000-885c352e3869
 ```
 
 One-off token without editing `.env`:
