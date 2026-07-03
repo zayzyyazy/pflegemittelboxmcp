@@ -703,7 +703,77 @@ test('stabilization: VNR birthday retry uses session-stored correction without f
     latest_customer_input: 'Sechzehnter März neunzehnhundertsechsundfünfzig',
     birthday_system_available: true,
   });
-  const staleRetry = runVerificationVnrBrain({ session_id: sessionId });
+  const staleRetry = runVerificationVnrBrain({
+    session_id: sessionId,
+    birthday_system_available: true,
+  });
   assert.equal(staleRetry.next_action, 'CALL_CHECK_BIRTHDAY');
   assert.equal(staleRetry.function_arguments?.birthday, '1956-03-16');
+});
+
+test('stabilization: caller phone in id_phone does not infer phone_lookup_found', () => {
+  const coerced = coerceVerificationPhoneBrainInput({
+    session_id: 'x',
+    id_phone: '%2B491627901764',
+    phone_lookup_found: false,
+  });
+  assert.equal(coerced.phone_lookup_found, false);
+});
+
+test('stabilization: phone brain rejects path when lookup failed despite caller id_phone', () => {
+  const result = runVerificationPhoneBrain({
+    session_id: 'phone-no-lookup',
+    id_phone: '+491627901764',
+    phone_lookup_found: false,
+  });
+  assert.equal(result.next_action, 'WRONG_METHOD');
+  assert.ok(result.safety_flags.includes('wrong_method_phone_lookup_not_found'));
+});
+
+test('stabilization: check_birthday blocked until birthday_system is bound', () => {
+  const sessionId = 'phone-bday-system-gate';
+  runVerificationPhoneBrain({
+    session_id: sessionId,
+    phone_lookup_found: true,
+    latest_customer_input: 'sechzehnter März neunzehnhundertsechsundfünfzig',
+  });
+  const gated = runVerificationPhoneBrain({ session_id: sessionId, phone_lookup_found: true });
+  assert.equal(gated.next_action, 'WAIT_FOR_BIRTHDAY_SYSTEM');
+  assert.ok(gated.safety_flags.includes('birthday_system_binding_required'));
+  assert.equal(gated.allowed_to_call_function, false);
+});
+
+test('stabilization: address confirm Merz month correction triggers lookup', () => {
+  const sessionId = 'addr-merz-month';
+  runVerificationAddressBrain({
+    session_id: sessionId,
+    plz: '41372',
+    house_number: '100',
+    birthday_customer: '1956-05-16',
+    get_customer_by_plz_geb_result: 'not_found',
+  });
+  const corrected = runVerificationAddressBrain({
+    session_id: sessionId,
+    latest_customer_input: 'Ja, das ist korrekt, aber ich bin im Merz geboren.',
+  });
+  assert.equal(corrected.next_action, 'CALL_GET_CUSTOMER_BY_PLZ_GEB');
+  assert.equal(corrected.stored_values?.birthday_customer, '1956-03-16');
+  assert.ok(corrected.safety_flags.includes('address_corrected'));
+});
+
+test('stabilization: VNR stale ja on birthday step re-prompts without parse failure', () => {
+  const sessionId = 'vnr-stale-ja-bday';
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    vnr_candidate: 'E207064360',
+    vnr_confirmed: true,
+    check_insurance_number_format_result: 'valid',
+    get_customer_by_insurance_number_result: 'found',
+  });
+  const stale = runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'Ja, ist korrekt.',
+  });
+  assert.equal(stale.next_action, 'ASK_BIRTHDAY');
+  assert.ok(stale.safety_flags.includes('birthday_acknowledgement_only'));
 });

@@ -8,7 +8,7 @@ SERVER_APP_PATH="/opt/pflegemittelboxmcp/server"
 DEPLOY_BRANCH="cursor/jun30-baseline-stabilization-6983"
 PM2_PROCESS_NAME="pflegemittelbox-mcp"
 HEALTH_URL="https://leapingai-api.pflegemittelbox.de/health"
-EXPECTED_BUILD_ID="stabilization-plz-method-v3"
+EXPECTED_BUILD="stabilization-call-hardening-v4"
 
 COMMIT_MESSAGE="${1:-}"
 
@@ -108,8 +108,8 @@ step "Checking public health endpoint"
 HEALTH_JSON="$(curl --fail --silent --show-error "$HEALTH_URL")"
 printf '%s\n' "$HEALTH_JSON"
 
-if ! printf '%s' "$HEALTH_JSON" | grep -q "$EXPECTED_BUILD_ID"; then
-  die "Health endpoint missing verification_build_id=$EXPECTED_BUILD_ID — live server is still on old code."
+if ! printf '%s' "$HEALTH_JSON" | grep -q "$EXPECTED_BUILD"; then
+  die "Health endpoint missing verification_build_id=$EXPECTED_BUILD — live server is still on old code."
 fi
 
 printf '\n'

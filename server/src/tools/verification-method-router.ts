@@ -222,8 +222,6 @@ function persistPathChoice(
   session.active_verification_path = path;
   if (phoneLookupFound !== undefined) {
     session.phone_lookup_found = phoneLookupFound;
-  } else if (path === 'phone') {
-    session.phone_lookup_found = true;
   }
   storeVerificationSessionState(sessionId, session);
 }
