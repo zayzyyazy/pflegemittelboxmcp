@@ -2,6 +2,14 @@ import type { LeapingCallRecord } from './types.js';
 
 type JsonRecord = Record<string, unknown>;
 
+const STRUCTURAL_EVENT_TYPES = new Set([
+  'start',
+  'end',
+  'transition',
+  'field_update',
+  'function_call_request',
+]);
+
 function asRecord(value: unknown): JsonRecord | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as JsonRecord)
@@ -47,14 +55,131 @@ function readNested(record: JsonRecord, parentKeys: string[], keys: string[]): u
   return undefined;
 }
 
+function mergeFields(target: JsonRecord, source: JsonRecord | null | undefined): void {
+  if (!source) return;
+  for (const [key, value] of Object.entries(source)) {
+    if (value !== undefined && value !== null) {
+      target[key] = value;
+    }
+  }
+}
+
+export interface ParsedLeapingTranscript {
+  transcript_text?: string;
+  summary_text?: string;
+  function_calls: Array<{ name: string; error?: string }>;
+  field_values: JsonRecord;
+}
+
+/** Leaping Calls API returns `transcript` as an event array (v2), not a plain string. */
+export function parseLeapingTranscriptEvents(transcript: unknown): ParsedLeapingTranscript {
+  const result: ParsedLeapingTranscript = {
+    function_calls: [],
+    field_values: {},
+  };
+
+  if (!Array.isArray(transcript)) {
+    return result;
+  }
+
+  const lines: string[] = [];
+  const seenFunctions = new Set<string>();
+
+  for (const entry of transcript) {
+    const event = asRecord(entry);
+    if (!event) continue;
+
+    const type = asString(event.type) ?? 'event';
+    const fields = asRecord(event.fields);
+    mergeFields(result.field_values, fields);
+
+    const eventSummary = asString(event.summary);
+    if (eventSummary) result.summary_text = eventSummary;
+
+    if (type === 'field_update') {
+      const field = asString(event.field);
+      const value = event.value ?? event.new_value;
+      if (field && value !== undefined && value !== null) {
+        result.field_values[field] = value;
+      }
+      continue;
+    }
+
+    if (type === 'function' || type === 'function_call') {
+      const name = asString(event.name);
+      if (name) {
+        const error = asString(event.error);
+        const key = `${name}:${error ?? ''}`;
+        if (!seenFunctions.has(key)) {
+          seenFunctions.add(key);
+          result.function_calls.push({ name, error });
+        }
+        const returned = asString(event.returned);
+        lines.push(
+          error
+            ? `tool ${name} ERROR: ${error}`
+            : `tool ${name}${returned ? ` → ${returned.slice(0, 120)}` : ''}`
+        );
+      }
+      continue;
+    }
+
+    if (type === 'function_call_request') {
+      const name = asString(event.name);
+      if (name) lines.push(`tool_request ${name}`);
+      continue;
+    }
+
+    if (type === 'transition') {
+      const to = asString(event.to_name) ?? asString(event.to);
+      if (to) lines.push(`transition → ${to}`);
+      continue;
+    }
+
+    if (STRUCTURAL_EVENT_TYPES.has(type) && type !== 'end') {
+      continue;
+    }
+
+    const utterance = asString(
+      readPath(event, [
+        'content',
+        'text',
+        'message',
+        'utterance',
+        'speech',
+        'said',
+        'transcript',
+        'user_message',
+        'agent_message',
+      ])
+    );
+
+    if (utterance) {
+      const role =
+        asString(readPath(event, ['role', 'speaker', 'from', 'source'])) ??
+        (type.includes('user') ? 'user' : type.includes('agent') || type.includes('assistant') ? 'assistant' : type);
+      lines.push(`${role}: ${utterance}`);
+    }
+  }
+
+  if (lines.length) {
+    result.transcript_text = lines.join('\n');
+  }
+
+  return result;
+}
+
 function extractFieldValues(record: JsonRecord): JsonRecord {
+  const merged: JsonRecord = {};
   const direct = asRecord(record.field_values) ?? asRecord(record.fields);
-  if (direct) return direct;
+  mergeFields(merged, direct);
   const fromResults = asRecord(record.results);
   if (fromResults) {
-    return asRecord(fromResults.field_values) ?? asRecord(fromResults.fields) ?? fromResults;
+    mergeFields(merged, asRecord(fromResults.field_values));
+    mergeFields(merged, asRecord(fromResults.fields));
+    mergeFields(merged, fromResults);
   }
-  return {};
+  return merged;
 }
 
 function buildTranscriptFromMessages(record: JsonRecord): string | undefined {
@@ -74,26 +199,23 @@ function buildTranscriptFromMessages(record: JsonRecord): string | undefined {
   return lines.length ? lines.join('\n') : undefined;
 }
 
-function normalizeFunctionCalls(record: JsonRecord): LeapingCallRecord['function_calls'] {
-  const raw =
-    record.function_calls ??
-    record.tool_calls ??
-    readNested(record, ['results'], ['function_calls']);
-
-  if (!Array.isArray(raw)) return undefined;
-
-  return raw
-    .map((item) => {
-      const fc = asRecord(item);
-      if (!fc) return null;
-      const name = asString(readPath(fc, ['name', 'function_name', 'tool_name']));
-      if (!name) return null;
-      return {
-        name,
-        error: asString(readPath(fc, ['error', 'error_message'])),
-      };
-    })
-    .filter((x): x is { name: string; error?: string } => x !== null);
+function normalizeFunctionCallsFromList(
+  raw: unknown,
+  into: Array<{ name: string; error?: string }>,
+  seen: Set<string>
+): void {
+  if (!Array.isArray(raw)) return;
+  for (const item of raw) {
+    const fc = asRecord(item);
+    if (!fc) continue;
+    const name = asString(readPath(fc, ['name', 'function_name', 'tool_name']));
+    if (!name) continue;
+    const error = asString(readPath(fc, ['error', 'error_message']));
+    const key = `${name}:${error ?? ''}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    into.push({ name, error });
+  }
 }
 
 function normalizeDetectedEvents(record: JsonRecord): LeapingCallRecord['detected_events'] {
@@ -115,8 +237,9 @@ function normalizeDetectedEvents(record: JsonRecord): LeapingCallRecord['detecte
 }
 
 function deriveDuration(record: JsonRecord): number | undefined {
-  const direct = readPath(record, ['duration_seconds', 'duration']);
-  if (typeof direct === 'number' && Number.isFinite(direct)) return Math.round(direct);
+  const direct = readPath(record, ['duration_seconds', 'duration', 'leaping_duration_seconds']);
+  const n = asNumber(direct);
+  if (n !== undefined) return Math.round(n);
   const started = asString(readPath(record, ['started_at', 'created_at']));
   const ended = asString(readPath(record, ['ended_at', 'completed_at', 'updated_at']));
   if (!started || !ended) return undefined;
@@ -129,24 +252,24 @@ function deriveVerificationSuccessful(
   record: JsonRecord,
   fieldValues: JsonRecord
 ): boolean | undefined {
-  const direct = asBoolean(
-    readPath(record, [
-      'verification_successful',
-      'verified',
-      'authenticated',
-      'authentication_successful',
-    ])
-  );
-  if (direct !== undefined) return direct;
+  const keys = [
+    'verification_successful',
+    'verified',
+    'authenticated',
+    'authentication_successful',
+    'leaping_conversation_usecase_successful',
+    'leaping_conversation_completed',
+  ];
 
-  return asBoolean(
-    readPath(fieldValues, [
-      'verification_successful',
-      'verified',
-      'authenticated',
-      'authentication_successful',
-    ])
-  );
+  for (const source of [record, fieldValues]) {
+    const value = asBoolean(readPath(source, keys));
+    if (value !== undefined) return value;
+  }
+
+  const success = asBoolean(record.success);
+  if (success !== undefined) return success;
+
+  return undefined;
 }
 
 function deriveCallStatus(record: JsonRecord): LeapingCallRecord['call_status'] {
@@ -171,10 +294,42 @@ export function normalizeLeapingCall(call: unknown): LeapingCallRecord | null {
   if (!id) return null;
 
   const fieldValues = extractFieldValues(record);
+
+  const transcriptRaw = record.transcript;
+  const parsedEvents =
+    typeof transcriptRaw === 'string'
+      ? { transcript_text: transcriptRaw, function_calls: [], field_values: {} }
+      : parseLeapingTranscriptEvents(transcriptRaw);
+
+  mergeFields(fieldValues, parsedEvents.field_values);
+
+  const summary_text =
+    asString(record.summary) ??
+    parsedEvents.summary_text ??
+    asString(readPath(fieldValues, ['leaping_conversation_summary']));
+
   const fromMessages = buildTranscriptFromMessages(record);
-  const transcript =
-    asString(readPath(record, ['transcript_text', 'transcript', 'transcript_content'])) ??
-    fromMessages;
+  const transcript_text =
+    asString(readPath(record, ['transcript_text', 'transcript_content'])) ??
+    parsedEvents.transcript_text ??
+    fromMessages ??
+    summary_text;
+
+  const functionCalls: Array<{ name: string; error?: string }> = [];
+  const seenFn = new Set<string>();
+  normalizeFunctionCallsFromList(record.function_calls ?? record.tool_calls, functionCalls, seenFn);
+  normalizeFunctionCallsFromList(
+    readNested(record, ['results'], ['function_calls']),
+    functionCalls,
+    seenFn
+  );
+  for (const fc of parsedEvents.function_calls) {
+    const key = `${fc.name}:${fc.error ?? ''}`;
+    if (!seenFn.has(key)) {
+      seenFn.add(key);
+      functionCalls.push(fc);
+    }
+  }
 
   return {
     id,
@@ -183,10 +338,11 @@ export function normalizeLeapingCall(call: unknown): LeapingCallRecord | null {
     created_at: asString(readPath(record, ['created_at', 'started_at', 'call_date'])),
     ended_at: asString(readPath(record, ['ended_at', 'completed_at'])),
     duration_seconds: deriveDuration(record),
-    transcript_text: transcript,
+    transcript_text,
+    summary_text,
     verification_successful: deriveVerificationSuccessful(record, fieldValues),
     phone_lookup_found: asBoolean(readPath(fieldValues, ['phone_lookup_found'])),
-    function_calls: normalizeFunctionCalls(record),
+    function_calls: functionCalls.length ? functionCalls : undefined,
     detected_events: normalizeDetectedEvents(record),
     raw: record,
   };

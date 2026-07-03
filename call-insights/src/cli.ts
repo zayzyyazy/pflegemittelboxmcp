@@ -73,12 +73,17 @@ async function main() {
   }
 
   const withTranscript = calls.filter((c) => (c.transcript_text?.length ?? 0) > 0).length;
-  if (withTranscript === 0) {
+  const withSummary = calls.filter((c) => (c.summary_text?.length ?? 0) > 0).length;
+  const withTools = calls.filter((c) => (c.function_calls?.length ?? 0) > 0).length;
+
+  if (withTranscript === 0 && withSummary === 0) {
     console.warn(
-      "Warning: no transcript_text on fetched calls — issue detection will rely on tool errors and field flags only."
+      "Warning: no transcript or summary extracted — check Leaping payload shape."
     );
   } else {
-    console.log(`${withTranscript}/${calls.length} calls have transcript text.`);
+    console.log(
+      `Content: ${withTranscript}/${calls.length} transcripts, ${withSummary}/${calls.length} summaries, ${withTools}/${calls.length} with tool logs`
+    );
   }
 
   const analyses = analyzeCalls(calls);

@@ -51,7 +51,10 @@ function main() {
   }
 
   const withTranscript = analyses.filter((a) => (a.call.transcript_text?.length ?? 0) > 0);
-  console.log(`\nTranscripts present: ${withTranscript.length}/${analyses.length}`);
+  const withSummary = analyses.filter((a) => (a.call.summary_text?.length ?? 0) > 0);
+  console.log(
+    `\nContent: ${withTranscript.length}/${analyses.length} transcripts, ${withSummary.length}/${analyses.length} summaries`
+  );
 
   const problemCalls = analyses
     .filter((a) => a.verdict !== "ok")
@@ -71,11 +74,12 @@ function main() {
         console.log(`    ${issue.detail.slice(0, 120)}`);
       }
     }
-    const excerpt = a.call.transcript_text?.slice(0, 200);
+    const excerpt = (a.call.transcript_text ?? a.call.summary_text ?? "").slice(0, 200);
     if (excerpt) {
-      console.log(`  transcript: ${excerpt.replace(/\n/g, " ")}…`);
+      const label = a.call.transcript_text ? "text" : "summary";
+      console.log(`  ${label}: ${excerpt.replace(/\n/g, " ")}…`);
     } else {
-      console.log("  transcript: (empty — list API may not include it)");
+      console.log("  text: (empty — no transcript[] or summary on call)");
     }
   }
 

@@ -54,6 +54,18 @@ const TRANSCRIPT_PATTERNS: Array<{
   },
   {
     test: (t) =>
+      /versichertennummer|vnr/i.test(t) &&
+      (/ungültig|mehrere versuche|nicht.*identifiz/i.test(t) ||
+        /keine eindeutige identifikation/i.test(t)),
+    issue: {
+      category: "verification_loop",
+      severity: "high",
+      title: "VNR/Identifikation gescheitert",
+      recommendation: "VNR-STT, Retry-Limit, oder früherer Methodenwechsel (Adresse/PLZ).",
+    },
+  },
+  {
+    test: (t) =>
       (t.match(/verstehe (ich )?nicht|habe ich nicht verstanden|was meinen sie/gi) ?? [])
         .length >= 2,
     issue: {
@@ -87,10 +99,19 @@ function countFillerMoments(transcript: string): number {
   return matches?.length ?? 0;
 }
 
+function analysisText(call: LeapingCallRecord): string {
+  const parts: string[] = [];
+  if (call.transcript_text) parts.push(call.transcript_text);
+  if (call.summary_text && call.summary_text !== call.transcript_text) {
+    parts.push(`summary: ${call.summary_text}`);
+  }
+  return parts.join('\n');
+}
+
 export function detectIssues(call: LeapingCallRecord): DetectedIssue[] {
   const issues: DetectedIssue[] = [];
   const seen = new Set<string>();
-  const transcript = call.transcript_text?.trim() ?? "";
+  const transcript = analysisText(call);
 
   for (const fc of call.function_calls ?? []) {
     if (fc.error?.includes("Missing field value: birthday_system")) {
@@ -213,6 +234,22 @@ export function detectIssues(call: LeapingCallRecord): DetectedIssue[] {
         title: "Kundenfrustration",
         detail: events?.customer_frustrated ? "customer_frustrated=true" : "Transcript-Hinweise",
         recommendation: "Flow vereinfachen; ggf. früherer Transfer.",
+      });
+    }
+
+    if (/menschlichen mitarbeiter|mit einem menschen|echten mitarbeiter/i.test(transcript)) {
+      pushUnique(issues, seen, {
+        category: "escalation",
+        severity: call.call_status === "transferred" ? "medium" : "high",
+        title: "Kunde wollte Mensch",
+        detail:
+          call.call_status === "transferred"
+            ? "Transfer laut Status/Summary"
+            : "Mensch-Anfrage ohne Transfer",
+        recommendation:
+          call.call_status === "transferred"
+            ? "Transfer OK — Verifikationsschleife (VNR/Adresse) vorher analysieren."
+            : "Transfer-Pfad in Leaping prüfen.",
       });
     }
   }
