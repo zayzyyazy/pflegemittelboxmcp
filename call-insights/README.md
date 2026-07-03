@@ -4,6 +4,28 @@ Export Leaping calls → rule-based + optional LLM analysis → **PDF / Markdown
 
 This tool lives **outside** the MCP server on purpose: learn from real calls first, then fix Marie prompt, Leaping bindings, or MCP surgically.
 
+## Where to run
+
+| Tool | Server path | Deployed by `server deploy`? |
+|------|-------------|------------------------------|
+| **MCP** (Marie brains) | `/opt/pflegemittelboxmcp/server` | Yes — PM2 `pflegemittelbox-mcp` |
+| **call-insights** (reports) | `/opt/pflegemittelboxmcp/call-insights` | **No** — manual setup |
+
+`call-insights` is **not** in `~/call-insights`. On Hetzner it is inside the git repo (branch `cursor/call-insights-export-6983` until merged to `master`).
+
+```bash
+cd /opt/pflegemittelboxmcp
+git fetch origin cursor/call-insights-export-6983
+git checkout cursor/call-insights-export-6983
+cd call-insights
+cp .env.example .env
+nano .env   # LEAPING_ACCESS_TOKEN + LEAPING_AGENT_ID
+npm install
+npm run report -- --days 7 --limit 100
+```
+
+Reports: `/opt/pflegemittelboxmcp/call-insights/reports/`. You can also run on your Mac — only Leaping API access needed.
+
 ## Leaping auth (Bearer token, not API key)
 
 Leaping does **not** use a standalone API key. You get a **Bearer access token** from login:
