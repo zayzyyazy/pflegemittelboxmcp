@@ -1,0 +1,21 @@
+{
+  "name": "pflegemittelbox-call-insights",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Export Leaping calls, analyze with LLM, produce DKN issue reports (separate from MCP runtime)",
+  "scripts": {
+    "report": "tsx src/cli.ts",
+    "test": "node --test --import tsx src/**/*.test.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "pdfkit": "^0.17.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.3",
+    "@types/pdfkit": "^0.13.9",
+    "tsx": "^4.8.2",
+    "typescript": "^5.4.5"
+  }
+}
