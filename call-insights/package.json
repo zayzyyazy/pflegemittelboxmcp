@@ -6,6 +6,7 @@
   "description": "Export Leaping calls, analyze with LLM, produce DKN issue reports (separate from MCP runtime)",
   "scripts": {
     "report": "tsx src/cli.ts",
+    "summarize": "tsx src/summarize-json.ts",
     "test": "node --test --import tsx src/**/*.test.ts"
   },
   "dependencies": {
