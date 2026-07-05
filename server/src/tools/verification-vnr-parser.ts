@@ -128,6 +128,17 @@ export function parseVnrUtterance(
   text: string | undefined,
   storedDigits: string | null | undefined
 ): VnrParseResult {
+  const compact = text?.trim().replace(/\s+/g, '').toUpperCase() ?? '';
+  if (/^[A-Z]\d{9}$/.test(compact)) {
+    return {
+      candidate: compact,
+      digits_only: compact.slice(1),
+      leading_letter: compact[0],
+      awaiting_letter: false,
+      valid_shape: true,
+    };
+  }
+
   if (!text?.trim()) {
     if (storedDigits && /^\d{9}$/.test(storedDigits)) {
       return {

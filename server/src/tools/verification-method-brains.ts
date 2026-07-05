@@ -1959,6 +1959,11 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
     return finalize(transfer, awaitingField);
   }
 
+  const effectiveAddressLookupAttempts = Math.max(
+    session?.attempts.address_lookup_attempts ?? 0,
+    input.address_lookup_attempts ?? 0
+  );
+
   if (!input.plz) {
     return finalize(
       makeResult('address', {
@@ -2060,7 +2065,7 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
   }
 
   if (input.get_customer_by_plz_geb_result === 'not_found' || isLookupNotFound(input.get_customer_by_plz_geb_result)) {
-    if ((input.address_lookup_attempts ?? 0) >= 2) {
+    if (effectiveAddressLookupAttempts >= 2) {
       return finalize(
         makeResult('address', {
           ok: false,
@@ -2108,7 +2113,7 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
   }
 
   if (input.get_customer_by_plz_geb_result === 'error') {
-    if ((input.address_lookup_attempts ?? 0) >= 2) {
+    if (effectiveAddressLookupAttempts >= 2) {
       return finalize(
         makeResult('address', {
           ok: false,

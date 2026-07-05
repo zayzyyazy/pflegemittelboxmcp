@@ -107,9 +107,29 @@ export const LEAPING_VERIFICATION_BRAIN_SCHEMA = {
       type: 'string',
       description: 'Customer answer to the current verification question only.',
     },
+    customer_intent: {
+      type: 'string',
+      description: 'Optional intent label from Leaping (e.g. box_change, delivery_status).',
+    },
     phone_lookup_found: {
       type: 'string',
       description: 'Whether get_customer_by_phone found a customer at call start.',
+    },
+    id_phone: {
+      ...customerIdFieldSchema,
+      description: 'Customer id from get_customer_by_phone when Leaping binds id_phone instead of phone_lookup_found.',
+    },
+    id: {
+      ...customerIdFieldSchema,
+      description: 'Customer id populated after get_customer_by_phone or insurance lookup.',
+    },
+    customer_id: {
+      ...customerIdFieldSchema,
+      description: 'Fallback customer id alias for Leaping field bindings.',
+    },
+    get_customer_by_phone_result: {
+      ...lookupResultFieldSchema,
+      description: 'Native get_customer_by_phone result summary or error text.',
     },
     get_customer_by_plz_geb_result: {
       ...lookupResultFieldSchema,
@@ -120,15 +140,6 @@ export const LEAPING_VERIFICATION_BRAIN_SCHEMA = {
       description:
         'Native get_customer_by_insurance_number result. Bind function output here after VNR lookup. ' +
         'Accepts found | not_found | error | CRM object.',
-    },
-    id: {
-      ...customerIdFieldSchema,
-      description:
-        'Fallback: customer id updated by Leaping after get_customer_by_insurance_number when result field is not bound.',
-    },
-    customer_id: {
-      ...customerIdFieldSchema,
-      description: 'Fallback customer id alias for Leaping field bindings.',
     },
     birthday_system: {
       ...birthdaySystemFieldSchema,
@@ -150,6 +161,8 @@ export const LEAPING_VERIFICATION_BRAIN_SCHEMA = {
       type: 'string',
       description: 'Native check_birthday error message, if any.',
     },
+    customer_requested_human: { type: 'boolean', description: 'Customer explicitly requested a human agent.' },
+    office_hours: { type: 'boolean', description: 'Whether office hours apply for transfer.' },
   },
   required: [] as string[],
 };
@@ -219,11 +232,14 @@ export const leapingVerificationMethodRouterZod = {
 export const leapingVerificationBrainZod = {
   session_id: z.string().optional(),
   latest_customer_input: z.string().optional(),
+  customer_intent: z.string().optional(),
   phone_lookup_found: z.union([z.boolean(), z.string()]).optional(),
-  get_customer_by_plz_geb_result: lookupResultZod.optional(),
-  get_customer_by_insurance_number_result: lookupResultZod.optional(),
+  id_phone: z.union([z.string(), z.number()]).optional(),
   id: z.union([z.string(), z.number()]).optional(),
   customer_id: z.union([z.string(), z.number()]).optional(),
+  get_customer_by_phone_result: lookupResultZod.optional(),
+  get_customer_by_plz_geb_result: lookupResultZod.optional(),
+  get_customer_by_insurance_number_result: lookupResultZod.optional(),
   birthday_system: z.union([z.string(), z.boolean()]).optional(),
   birthday_system_available: z.boolean().optional(),
   birthday_customer: z.string().optional(),
@@ -232,6 +248,8 @@ export const leapingVerificationBrainZod = {
     z.boolean(),
   ]).optional(),
   check_birthday_error: z.string().optional(),
+  customer_requested_human: z.boolean().optional(),
+  office_hours: z.boolean().optional(),
 };
 
 export const leapingVerificationVnrBrainZod = {

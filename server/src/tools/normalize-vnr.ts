@@ -38,8 +38,21 @@ export interface NormalizeVnrResult {
  * - Mixed digit characters and number words
  * - Partial results when digits are missing
  */
+const COMPACT_VNR_PATTERN = /^[A-Za-z]\d{9}$/;
+
 export function normalizeVnr(text: string): NormalizeVnrResult {
-  const lower = text.toLowerCase().trim();
+  const trimmed = text.trim();
+  const compact = trimmed.replace(/\s+/g, '').toUpperCase();
+  if (COMPACT_VNR_PATTERN.test(compact)) {
+    return {
+      candidate: compact,
+      valid_shape: true,
+      confidence: 'high',
+      notes: 'Recognized compact pasted VNR (letter + nine digits).',
+    };
+  }
+
+  const lower = trimmed.toLowerCase();
   const notes: string[] = [];
   let confidence: 'high' | 'medium' | 'low' = 'high';
   let letter: string | null = null;

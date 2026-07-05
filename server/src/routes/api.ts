@@ -32,6 +32,7 @@ import {
   LEAPING_VERIFICATION_METHOD_ROUTER_SCHEMA,
   LEAPING_VERIFICATION_PHONE_BRAIN_SCHEMA,
   LEAPING_VERIFICATION_VNR_BRAIN_SCHEMA,
+  LEAPING_VERIFICATION_BRAIN_SCHEMA,
 } from '../tools/verification-leaping-schemas.js';
 import {
   coerceVerificationAddressBrainInput,
@@ -43,9 +44,9 @@ import {
 } from '../tools/verification-method-brains.js';
 import { toDashboardVerificationBrainResponse } from '../tools/verification-brain-response.js';
 import {
-  coerceVerificationBrainInput,
-  runVerificationBrain,
-} from '../tools/verification-brain.js';
+  coerceUnifiedVerificationBrainInput,
+  runUnifiedVerificationBrain,
+} from '../tools/verification-orchestrator.js';
 import {
   coerceSafeInsuranceLookupInput,
   coerceSafePlzGebLookupInput,
@@ -231,35 +232,10 @@ const TOOL_DEFS = [
   {
     name: 'pmb_verification_brain',
     description:
-      'Deterministic verification decision engine for phone, address, and VNR paths. ' +
-      'Returns the next safe action, any allowed function call, any allowed transition, and exact response wording.',
+      'Unified verification controller for phone, address, and VNR paths in a single Leaping dialogue.',
     category: 'guardrail',
     safe: true,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        phone_lookup_found: { type: 'boolean', description: 'Whether phone lookup already found a customer.' },
-        identified: { type: 'boolean', description: 'Whether the customer is identified.' },
-        authenticated: { type: 'boolean', description: 'Whether the customer is authenticated.' },
-        lookup_path: { type: 'string', description: 'phone | address | vnr | unknown' },
-        plz: { type: 'string', description: 'Collected PLZ if any.' },
-        house_number: { type: 'string', description: 'Collected house number if any.' },
-        birthday_customer: { type: 'string', description: 'Customer-provided birthday if any.' },
-        vnr_raw: { type: 'string', description: 'Raw VNR text if any.' },
-        vnr_confirmed: { type: 'boolean', description: 'Whether the VNR has been confirmed by the customer.' },
-        vnr_candidate: { type: 'string', description: 'Normalized VNR candidate if any.' },
-        vnr_valid_shape: { type: 'boolean', description: 'Whether the VNR is known to match the required shape.' },
-        get_customer_by_plz_geb_result: { type: 'string', description: 'found | not_found | error | not_called' },
-        get_customer_by_insurance_number_result: { type: 'string', description: 'found | not_found | error | not_called' },
-        check_birthday_result: { type: 'string', description: 'success | failed | error | not_called' },
-        check_birthday_error: { type: 'string', description: 'Any birthday-check error message.' },
-        birthday_system_available: { type: 'boolean', description: 'Whether the stored birthday field is available for checking.' },
-        attempt_counts: { type: 'object', description: 'JSON object with birthday/address/VNR attempt counts.' },
-        customer_requested_human: { type: 'boolean', description: 'Whether the customer asked for a human.' },
-        office_hours: { type: 'boolean', description: 'Whether office hours are open.' },
-      },
-      required: [],
-    },
+    inputSchema: LEAPING_VERIFICATION_BRAIN_SCHEMA,
   },
   {
     name: 'pmb_delivery_status_reasoner',
@@ -465,7 +441,9 @@ apiRouter.post('/tools/:name/test', async (req, res) => {
         )
       );
     } else if (name === 'pmb_verification_brain') {
-      output = runVerificationBrain(coerceVerificationBrainInput(input as Record<string, unknown>));
+      output = toDashboardVerificationBrainResponse(
+        runUnifiedVerificationBrain(coerceUnifiedVerificationBrainInput(input as Record<string, unknown>))
+      );
     } else if (name === 'pmb_delivery_status_reasoner') {
       output = runDeliveryStatusReasoner(
         coerceDeliveryStatusReasonerInput(input as Record<string, unknown>)

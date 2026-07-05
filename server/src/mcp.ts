@@ -48,7 +48,10 @@ import {
   toLeapingVerificationBrainResponse,
   toLoggedVerificationBrainResponse,
 } from './tools/verification-brain-response.js';
-import { runVerificationBrain } from './tools/verification-brain.js';
+import {
+  coerceUnifiedVerificationBrainInput,
+  runUnifiedVerificationBrain,
+} from './tools/verification-orchestrator.js';
 import {
   coerceSafeInsuranceLookupInput,
   coerceSafePlzGebLookupInput,
@@ -307,45 +310,18 @@ export function createMcpServer(): McpServer {
 
   server.tool(
     'pmb_verification_brain',
-    'Deterministic verification decision engine for phone, address, and VNR identification paths. ' +
-      'Returns the next safe action, function permission, transition permission, and exact response wording.',
-    {
-      phone_lookup_found: z.boolean().optional(),
-      identified: z.boolean().optional(),
-      authenticated: z.boolean().optional(),
-      lookup_path: z.enum(['phone', 'address', 'vnr', 'unknown']).optional(),
-      plz: z.string().optional(),
-      house_number: z.string().optional(),
-      birthday_customer: z.string().optional(),
-      vnr_raw: z.string().optional(),
-      vnr_confirmed: z.boolean().optional(),
-      vnr_candidate: z.string().optional(),
-      vnr_valid_shape: z.boolean().optional(),
-      get_customer_by_plz_geb_result: z
-        .enum(['found', 'not_found', 'error', 'not_called'])
-        .optional(),
-      get_customer_by_insurance_number_result: z
-        .enum(['found', 'not_found', 'error', 'not_called'])
-        .optional(),
-      check_birthday_result: z.enum(['success', 'failed', 'error', 'not_called']).optional(),
-      check_birthday_error: z.string().optional(),
-      birthday_system_available: z.boolean().optional(),
-      attempt_counts: z
-        .object({
-          birthday_requests: z.number().optional(),
-          address_lookup_attempts: z.number().optional(),
-          vnr_lookup_attempts: z.number().optional(),
-          birthday_check_attempts: z.number().optional(),
-        })
-        .optional(),
-      customer_requested_human: z.boolean().optional(),
-      office_hours: z.boolean().optional(),
-    },
+    'Unified verification controller for phone, address, and VNR paths in a single Leaping dialogue. ' +
+      'Handles method choice, path switching, and all verification steps via session-backed MCP state.',
+    leapingVerificationBrainZod,
     async (input) => {
       const start = Date.now();
-      const result = runVerificationBrain(input);
-      logCall('pmb_verification_brain', input, result, null, Date.now() - start);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      const coerced = coerceUnifiedVerificationBrainInput(input as Record<string, unknown>);
+      const result = runUnifiedVerificationBrain(coerced);
+      const logged = toLoggedVerificationBrainResponse(result);
+      logCall('pmb_verification_brain', coerced, logged, null, Date.now() - start);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(toLeapingVerificationBrainResponse(result), null, 2) }],
+      };
     }
   );
 

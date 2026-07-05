@@ -27,6 +27,7 @@ import {
 import {
   LEAPING_VERIFICATION_METHOD_ROUTER_SCHEMA,
   LEAPING_VERIFICATION_PHONE_BRAIN_SCHEMA,
+  LEAPING_VERIFICATION_BRAIN_SCHEMA,
 } from '../tools/verification-leaping-schemas.js';
 import {
   coerceVerificationAddressBrainInput,
@@ -38,9 +39,9 @@ import {
 } from '../tools/verification-method-brains.js';
 import { toDashboardVerificationBrainResponse } from '../tools/verification-brain-response.js';
 import {
-  coerceVerificationBrainInput,
-  runVerificationBrain,
-} from '../tools/verification-brain.js';
+  coerceUnifiedVerificationBrainInput,
+  runUnifiedVerificationBrain,
+} from '../tools/verification-orchestrator.js';
 import {
   coerceSafeInsuranceLookupInput,
   coerceSafePlzGebLookupInput,
@@ -225,11 +226,10 @@ export const TOOL_DEFS = [
   {
     name: 'pmb_verification_brain',
     description:
-      'Deterministic verification decision engine for phone, address, and VNR paths. ' +
-      'Returns the next safe action, any allowed function call, any allowed transition, and exact response wording.',
+      'Unified verification controller for phone, address, and VNR paths in a single Leaping dialogue.',
     category: 'guardrail',
     safe: true,
-    inputSchema: { type: 'object', properties: {}, required: [] },
+    inputSchema: LEAPING_VERIFICATION_BRAIN_SCHEMA,
   },
   {
     name: 'pmb_delivery_status_reasoner',
@@ -342,7 +342,9 @@ export async function runDashboardTool(name: string, input: Record<string, unkno
         runVerificationVnrBrain(coerceVerificationVnrBrainInput(input))
       );
     } else if (name === 'pmb_verification_brain') {
-      output = runVerificationBrain(coerceVerificationBrainInput(input));
+      output = toDashboardVerificationBrainResponse(
+        runUnifiedVerificationBrain(coerceUnifiedVerificationBrainInput(input))
+      );
     } else if (name === 'pmb_delivery_status_reasoner') {
       output = runDeliveryStatusReasoner(coerceDeliveryStatusReasonerInput(input));
     } else if (name === 'pmb_post_call_alert_detector') {

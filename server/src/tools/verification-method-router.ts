@@ -131,7 +131,7 @@ const LEAPING_TRANSITION: Record<VerificationPath, LeapingRouterTransition> = {
   address: 'PLZ',
 };
 
-function detectVnrPreference(text: string | undefined): boolean {
+export function detectVnrPreference(text: string | undefined): boolean {
   if (!text) return false;
   if (looksLikeVnrCandidate(text)) return true;
   const normalized = normalizeText(text);
@@ -158,7 +158,7 @@ function detectVnrPreference(text: string | undefined): boolean {
   return Boolean(candidate && /^[A-Z][0-9]{9}$/.test(candidate));
 }
 
-function detectAddressPreference(text: string | undefined): boolean {
+export function detectAddressPreference(text: string | undefined): boolean {
   if (!text) return false;
   const normalized = normalizeText(text);
   const addressKeywords = [
@@ -182,7 +182,7 @@ function detectAddressPreference(text: string | undefined): boolean {
   return /\b\d{5}\b/.test(text);
 }
 
-function detectPathFromInput(
+export function detectPathFromInput(
   latestCustomerInput: string | undefined,
   phoneLookupFound: boolean | undefined
 ): VerificationPath | null {

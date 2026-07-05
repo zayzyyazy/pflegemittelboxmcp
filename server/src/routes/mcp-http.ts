@@ -61,9 +61,9 @@ import {
   toLoggedVerificationBrainResponse,
 } from '../tools/verification-brain-response.js';
 import {
-  coerceVerificationBrainInput,
-  runVerificationBrain,
-} from '../tools/verification-brain.js';
+  coerceUnifiedVerificationBrainInput,
+  runUnifiedVerificationBrain,
+} from '../tools/verification-orchestrator.js';
 import {
   coerceSafeInsuranceLookupInput,
   coerceSafePlzGebLookupInput,
@@ -200,32 +200,8 @@ const MCP_TOOLS = [
   {
     name: 'pmb_verification_brain',
     description:
-      'Deterministic verification decision engine for phone, address, and VNR identification paths.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        phone_lookup_found: { type: 'boolean' },
-        identified: { type: 'boolean' },
-        authenticated: { type: 'boolean' },
-        lookup_path: { type: 'string' },
-        plz: { type: 'string' },
-        house_number: { type: 'string' },
-        birthday_customer: { type: 'string' },
-        vnr_raw: { type: 'string' },
-        vnr_confirmed: { type: 'boolean' },
-        vnr_candidate: { type: 'string' },
-        vnr_valid_shape: { type: 'boolean' },
-        get_customer_by_plz_geb_result: { type: 'string' },
-        get_customer_by_insurance_number_result: { type: 'string' },
-        check_birthday_result: { type: 'string' },
-        check_birthday_error: { type: 'string' },
-        birthday_system_available: { type: 'boolean' },
-        attempt_counts: { type: 'object' },
-        customer_requested_human: { type: 'boolean' },
-        office_hours: { type: 'boolean' },
-      },
-      required: [],
-    },
+      'Unified verification controller for phone, address, and VNR paths in a single Leaping dialogue.',
+    inputSchema: LEAPING_VERIFICATION_BRAIN_SCHEMA,
   },
   {
     name: 'pmb_delivery_status_reasoner',
@@ -446,10 +422,13 @@ async function runTool(
     }
 
     case 'pmb_verification_brain': {
-      const input = coerceVerificationBrainInput(args);
-      const result = runVerificationBrain(input);
-      logCall('pmb_verification_brain', input, result, null, Date.now() - start);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      const input = coerceUnifiedVerificationBrainInput(args);
+      const result = runUnifiedVerificationBrain(input);
+      const logged = toLoggedVerificationBrainResponse(result);
+      logCall('pmb_verification_brain', input, logged, null, Date.now() - start);
+      return {
+        content: [{ type: 'text', text: JSON.stringify(toLeapingVerificationBrainResponse(result), null, 2) }],
+      };
     }
 
     case 'pmb_delivery_status_reasoner': {

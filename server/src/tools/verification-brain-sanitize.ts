@@ -159,6 +159,7 @@ export function sanitizeVerificationBrainSplitResponse(
 
 export function sanitizeMcpToolInput(toolName: string, input: unknown): unknown {
   if (
+    toolName === 'pmb_verification_brain' ||
     toolName === 'pmb_verification_phone_brain' ||
     toolName === 'pmb_verification_address_brain' ||
     toolName === 'pmb_verification_vnr_brain'
@@ -172,6 +173,7 @@ export function sanitizeMcpToolOutput(toolName: string, output: unknown): unknow
   if (output === null || output === undefined) return output;
 
   if (
+    toolName === 'pmb_verification_brain' ||
     toolName === 'pmb_verification_phone_brain' ||
     toolName === 'pmb_verification_address_brain' ||
     toolName === 'pmb_verification_vnr_brain'
