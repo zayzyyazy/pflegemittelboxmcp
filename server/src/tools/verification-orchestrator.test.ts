@@ -19,6 +19,31 @@ test('normalizeVnr accepts compact pasted VNR', () => {
   assert.equal(normalized.valid_shape, true);
 });
 
+test('unified flow: unclear method answer uses shorter retry not full intro', () => {
+  const sessionId = `${SESSION}-unclear-method`;
+  runUnifiedVerificationBrain({ session_id: sessionId, customer_intent: 'boxwechsel' });
+  const retry = runUnifiedVerificationBrain({
+    session_id: sessionId,
+    latest_customer_input: 'Gesundheit',
+  });
+  assert.equal(retry.next_action, 'ASK_METHOD');
+  assert.match(retry.say, /Versichertennummer oder die Postleitzahl/i);
+  assert.doesNotMatch(retry.say, /Gerne, ich helfe Ihnen dabei/i);
+});
+
+test('unified flow: address birthday STT typo completes lookup', () => {
+  const sessionId = `${SESSION}-bday-stt`;
+  runUnifiedVerificationBrain({ session_id: sessionId, latest_customer_input: 'Postleitzahl' });
+  runUnifiedVerificationBrain({ session_id: sessionId, latest_customer_input: '41372' });
+  runUnifiedVerificationBrain({ session_id: sessionId, latest_customer_input: '100' });
+  const bday = runUnifiedVerificationBrain({
+    session_id: sessionId,
+    latest_customer_input: 'sechzenter märz neunzehnhundertsechundfünfzig',
+  });
+  assert.equal(bday.next_action, 'CALL_GET_CUSTOMER_BY_PLZ_GEB');
+  assert.equal(bday.stored_values?.birthday_customer, '1965-03-16');
+});
+
 test('unified flow: STT typo Postleizahl selects address path', () => {
   const sessionId = `${SESSION}-typo-plz`;
   runUnifiedVerificationBrain({ session_id: sessionId });

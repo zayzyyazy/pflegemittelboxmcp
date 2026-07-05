@@ -43,6 +43,9 @@ export interface UnifiedVerificationBrainInput {
 const METHOD_CHOICE_RETRY_SAY =
   'Meinten Sie die Versichertennummer oder die Postleitzahl? Bitte antworten Sie mit Versichertennummer oder Postleitzahl.';
 
+const METHOD_CHOICE_CLARIFY_SAY =
+  'Ich habe das leider nicht eindeutig verstanden. Meinten Sie die Versichertennummer oder die Postleitzahl?';
+
 function optionalString(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
@@ -113,6 +116,7 @@ function persistPathChoice(
   if (!session) return;
   session.active_verification_path = path;
   session.awaiting_method_choice = false;
+  session.method_choice_attempts = 0;
   session.phone_lookup_found = phoneLookupFound;
   storeVerificationSessionState(sessionId, session);
 }
@@ -125,6 +129,15 @@ function markAwaitingMethodChoice(sessionId: string | undefined): void {
   storeVerificationSessionState(sessionId, session);
 }
 
+function incrementMethodChoiceAttempts(sessionId: string | undefined): number {
+  if (!sessionId) return 0;
+  const session = loadVerificationSessionState(sessionId);
+  if (!session) return 0;
+  session.method_choice_attempts += 1;
+  storeVerificationSessionState(sessionId, session);
+  return session.method_choice_attempts;
+}
+
 function buildMethodChoiceResult(
   rawInput: UnifiedVerificationBrainInput,
   sessionReceived: boolean,
@@ -133,6 +146,9 @@ function buildMethodChoiceResult(
   if (sessionReceived) {
     markAwaitingMethodChoice(rawInput.session_id);
   }
+  const attemptCount = retry && sessionReceived
+    ? incrementMethodChoiceAttempts(rawInput.session_id)
+    : 0;
 
   return {
     ok: true,
@@ -140,7 +156,11 @@ function buildMethodChoiceResult(
     active_brain: null,
     action_type: 'SAY_ONLY',
     next_action: 'ASK_METHOD',
-    say: retry ? METHOD_CHOICE_RETRY_SAY : buildMethodChoiceQuestion(rawInput.customer_intent),
+    say: retry
+      ? attemptCount >= 2
+        ? METHOD_CHOICE_CLARIFY_SAY
+        : METHOD_CHOICE_RETRY_SAY
+      : buildMethodChoiceQuestion(rawInput.customer_intent),
     reason: retry
       ? 'Customer answer to the method question was not understood; ask again with a shorter prompt.'
       : 'Verification method must be chosen before collecting PLZ, VNR, or birthday.',

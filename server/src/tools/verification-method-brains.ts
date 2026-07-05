@@ -122,6 +122,7 @@ interface VerificationSessionState extends VerificationSessionStoredValues {
   pending_birthday_month: number | null;
   awaiting_field: AddressAwaitingField | null;
   awaiting_method_choice: boolean;
+  method_choice_attempts: number;
   attempts: VerificationSessionAttempts;
   birthday_collected_before_vnr_lookup: boolean;
   vnr_customer_birthday_collected: boolean;
@@ -295,11 +296,30 @@ const BIRTHDAY_STT_TOKEN_REPAIRS: Record<string, string> = {
   sechzen: 'sechzehn',
   sechszehn: 'sechzehn',
   sechzeen: 'sechzehn',
+  sechzenter: 'sechzehnter',
+  sechzente: 'sechzehnter',
+  sechzten: 'sechzehnter',
   siebsen: 'siebzehn',
   siebzeen: 'siebzehn',
   achtzeen: 'achtzehn',
   neunzeen: 'neunzehn',
+  sechundfunfzig: 'funfundsechzig',
+  sechundfünfzig: 'fünfundsechzig',
+  sechundfuenfzig: 'funfundsechzig',
+  sechsundfunfzig: 'sechsundfunfzig',
+  neunzehnhundertsechundfunfzig: 'neunzehnhundertfunfundsechzig',
+  neunzehnhundertsechundfünfzig: 'neunzehnhundertfünfundsechzig',
+  neunzehnhundertsechundfuenfzig: 'neunzehnhundertfunfundsechzig',
 };
+
+const BIRTHDAY_STT_COMPOUND_REPAIRS: Array<[string, string]> = [
+  ['sechundfunfzig', 'funfundsechzig'],
+  ['sechundfuenfzig', 'funfundsechzig'],
+  ['sechundfünfzig', 'fünfundsechzig'],
+  ['neunzehnhundertsechundfunfzig', 'neunzehnhundertfunfundsechzig'],
+  ['neunzehnhundertsechundfuenfzig', 'neunzehnhundertfunfundsechzig'],
+  ['neunzehnhundertsechundfünfzig', 'neunzehnhundertfünfundsechzig'],
+];
 
 const HOUSE_NUMBER_SUFFIX_WORDS = new Set(['a', 'b', 'c', 'd', 'alpha', 'beta']);
 const YES_WORDS = ['ja', 'jawohl', 'stimmt', 'genau', 'korrekt', 'richtig', 'das stimmt'];
@@ -338,6 +358,7 @@ function emptySessionState(): VerificationSessionState {
     pending_birthday_month: null,
     awaiting_field: null,
     awaiting_method_choice: false,
+    method_choice_attempts: 0,
     attempts: emptyAttempts(),
     birthday_collected_before_vnr_lookup: false,
     vnr_customer_birthday_collected: false,
@@ -602,6 +623,9 @@ const VNR_BIRTHDAY_CHECK_FAILED_RETRY_SAY =
 
 const VNR_BIRTHDAY_PARSE_RETRY_SAY =
   'Ich habe das Geburtsdatum leider akustisch nicht sicher verstanden. Bitte nennen Sie es im Format Tag, Monat und Jahr.';
+
+const ADDRESS_BIRTHDAY_PARSE_RETRY_SAY =
+  'Ich habe das Geburtsdatum leider akustisch nicht sicher verstanden. Bitte nennen Sie Tag, Monat und Jahr, zum Beispiel sechzehnter März neunzehnhundertfünfundsechzig.';
 
 function isVnrInBirthdayAuthPhase(
   session: VerificationSessionState | null,
@@ -929,7 +953,15 @@ function parseOrdinalToken(input: string): number | null {
 }
 
 function repairBirthdayToken(normalized: string): string {
-  return BIRTHDAY_STT_TOKEN_REPAIRS[normalized] ?? normalized;
+  const direct = BIRTHDAY_STT_TOKEN_REPAIRS[normalized];
+  if (direct) return direct;
+  let repaired = normalized;
+  for (const [from, to] of BIRTHDAY_STT_COMPOUND_REPAIRS) {
+    if (repaired.includes(from)) {
+      repaired = repaired.replace(from, to);
+    }
+  }
+  return repaired;
 }
 
 function parseMonthToken(normalized: string): number | undefined {
@@ -1739,6 +1771,26 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
     }));
   }
 
+  if (
+    latestText &&
+    !input.birthday_customer &&
+    birthdayMerge.parse.status === 'missing'
+  ) {
+    const result = makeResult('phone', {
+      ok: true,
+      next_action: 'ASK_BIRTHDAY',
+      say:
+        (input.birthday_request_count ?? 0) >= 1
+          ? ADDRESS_BIRTHDAY_PARSE_RETRY_SAY
+          : 'Bitte nennen Sie mir zur Verifizierung Ihr Geburtsdatum.',
+      reason: 'Birthday speech could not be parsed during phone verification.',
+      missing_fields: ['birthday_customer'],
+      safety_flags: ['birthday_parse_failed'],
+    });
+    saveSessionState(rawInput.session_id, session ?? emptySessionState());
+    return finalizePhone(result);
+  }
+
   if (!input.birthday_customer) {
     if ((input.birthday_request_count ?? 0) >= 2) {
       return finalizePhone(makeResult('phone', {
@@ -2026,6 +2078,29 @@ export function runVerificationAddressBrain(rawInput: VerificationAddressBrainIn
         reason: birthdayMerge.parse.reason ?? 'Birthday was impossible or ambiguous.',
         missing_fields: ['birthday_customer'],
         safety_flags: ['birthday_invalid', 'never_call_check_birthday_in_address_path'],
+        awaiting_field: 'birthday_customer',
+      }),
+      'birthday_customer'
+    );
+  }
+
+  if (
+    latestText &&
+    awaitingField === 'birthday_customer' &&
+    !input.birthday_customer &&
+    birthdayMerge.parse.status === 'missing'
+  ) {
+    return finalize(
+      makeResult('address', {
+        ok: true,
+        next_action: 'ASK_BIRTHDAY',
+        say:
+          (input.address_lookup_attempts ?? 0) >= 1 || (session?.attempts.birthday_collection_attempts ?? 0) >= 1
+            ? ADDRESS_BIRTHDAY_PARSE_RETRY_SAY
+            : 'Bitte nennen Sie mir zur Verifizierung Ihr Geburtsdatum.',
+        reason: 'Birthday speech could not be parsed during address verification.',
+        missing_fields: ['birthday_customer'],
+        safety_flags: ['birthday_parse_failed', 'never_call_check_birthday_in_address_path'],
         awaiting_field: 'birthday_customer',
       }),
       'birthday_customer'

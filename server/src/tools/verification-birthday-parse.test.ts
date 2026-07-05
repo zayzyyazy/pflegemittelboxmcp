@@ -2,6 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseVerificationBirthday } from './verification-method-brains.js';
 
+test('parseVerificationBirthday handles STT typo sechzenter märz sechundfünfzig', () => {
+  const parsed = parseVerificationBirthday('sechzenter märz sechundfünfzig');
+  assert.equal(parsed.status, 'complete');
+  assert.equal(parsed.iso, '1965-03-16');
+});
+
+test('parseVerificationBirthday handles STT typo neunzehnhundertsechundfünfzig', () => {
+  const parsed = parseVerificationBirthday('sechzenter märz neunzehnhundertsechundfünfzig');
+  assert.equal(parsed.status, 'complete');
+  assert.equal(parsed.iso, '1965-03-16');
+});
+
 test('parseVerificationBirthday handles STT typo sechzen märz fünfzig', () => {
   const parsed = parseVerificationBirthday('sechzen märz fünfzig');
   assert.equal(parsed.status, 'complete');
