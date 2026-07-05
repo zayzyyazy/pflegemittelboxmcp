@@ -82,7 +82,7 @@ export interface VerificationMethodBrainResult {
   function_arguments?: Record<string, string>;
   leaping_function_arguments?: Record<string, string>;
   action_type?: VerificationActionType;
-  active_brain?: 'phone' | 'address' | 'vnr';
+  active_brain?: 'phone' | 'address' | 'vnr' | null;
   function_name?: string | null;
   transition_name?: 'weiter' | 'nicht_identifiziert' | null;
   requires_followup_mcp_call?: boolean;
