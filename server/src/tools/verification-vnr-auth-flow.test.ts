@@ -508,6 +508,40 @@ test('VNR spoken sechzehnter märz neunzehnhundertfünfzig returns CALL_FUNCTION
   assert.deepEqual(parsed.function_arguments, { birthday: '1950-03-16' });
 });
 
+test('VNR garbled STT sechsundfünfozfg returns CALL_FUNCTION check_birthday', () => {
+  const sessionId = `${SESSION}-stt-garbled-year`;
+  setupVnrLookupFoundAskBirthday(sessionId);
+
+  const parsed = runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'sechzen märz sechsundfünfozfg',
+    birthday_system_available: true,
+  });
+
+  assert.equal(parsed.next_action, 'CALL_CHECK_BIRTHDAY');
+  assert.deepEqual(parsed.function_arguments, { birthday: '1956-03-16' });
+});
+
+test('VNR birthday ja genau after parsed birthday returns CALL_FUNCTION check_birthday', () => {
+  const sessionId = `${SESSION}-bday-ja-genau`;
+  setupVnrLookupFoundAskBirthday(sessionId);
+
+  runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'sechzehn märz sechsundfünfzig',
+    birthday_system_available: true,
+  });
+
+  const confirm = runVerificationVnrBrain({
+    session_id: sessionId,
+    latest_customer_input: 'ja genau',
+    birthday_system_available: true,
+  });
+
+  assert.equal(confirm.next_action, 'CALL_CHECK_BIRTHDAY');
+  assert.deepEqual(confirm.function_arguments, { birthday: '1956-03-16' });
+});
+
 test('VNR unparseable birthday in auth phase returns acoustic retry not first-time ask', () => {
   const sessionId = `${SESSION}-stt-unparseable`;
   setupVnrLookupFoundAskBirthday(sessionId);

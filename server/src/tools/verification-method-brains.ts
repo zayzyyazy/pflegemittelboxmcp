@@ -306,7 +306,10 @@ const BIRTHDAY_STT_TOKEN_REPAIRS: Record<string, string> = {
   sechundfunfzig: 'funfundsechzig',
   sechundfünfzig: 'fünfundsechzig',
   sechundfuenfzig: 'funfundsechzig',
-  sechsundfunfzig: 'sechsundfunfzig',
+  sechsundfunfzig: 'sechsundfünfzig',
+  sechsundfünfozfg: 'sechsundfünfzig',
+  sechsundfunfzog: 'sechsundfünfzig',
+  sechsundfuenfzig: 'sechsundfünfzig',
   neunzehnhundertsechundfunfzig: 'neunzehnhundertfunfundsechzig',
   neunzehnhundertsechundfünfzig: 'neunzehnhundertfünfundsechzig',
   neunzehnhundertsechundfuenfzig: 'neunzehnhundertfunfundsechzig',
@@ -316,6 +319,9 @@ const BIRTHDAY_STT_COMPOUND_REPAIRS: Array<[string, string]> = [
   ['sechundfunfzig', 'funfundsechzig'],
   ['sechundfuenfzig', 'funfundsechzig'],
   ['sechundfünfzig', 'fünfundsechzig'],
+  ['sechsundfünfozfg', 'sechsundfünfzig'],
+  ['sechsundfunfzog', 'sechsundfünfzig'],
+  ['sechsundfuenfzig', 'sechsundfünfzig'],
   ['neunzehnhundertsechundfunfzig', 'neunzehnhundertfunfundsechzig'],
   ['neunzehnhundertsechundfuenfzig', 'neunzehnhundertfunfundsechzig'],
   ['neunzehnhundertsechundfünfzig', 'neunzehnhundertfünfundsechzig'],
@@ -532,6 +538,10 @@ function getVnrAuthBirthdayCustomer(
 ): string | undefined {
   if (!lookupFound) return undefined;
 
+  if (rawInput.latest_customer_input && isYesLike(rawInput.latest_customer_input)) {
+    if (session?.birthday_customer) return session.birthday_customer;
+  }
+
   if (rawInput.latest_customer_input && birthdayMerge.value) {
     return birthdayMerge.value;
   }
@@ -705,6 +715,16 @@ function runVnrInsuranceLookupFoundStep(
     !vnrAuthBirthday &&
     birthdayMerge.parse.status === 'missing'
   ) {
+    if (isYesLike(latestCustomerInput) && session?.pending_birthday_day && session.pending_birthday_month) {
+      return finalize(makeResult('vnr', {
+        ok: true,
+        next_action: 'ASK_BIRTH_YEAR',
+        say: 'Bitte nennen Sie mir noch das Geburtsjahr vollständig.',
+        reason: 'Customer confirmed day and month but year is still missing.',
+        missing_fields: ['birth_year'],
+        safety_flags: [],
+      }));
+    }
     if (session) session.vnr_awaiting_customer_birthday = true;
     return finalize(makeResult('vnr', {
       ok: false,
@@ -961,7 +981,30 @@ function repairBirthdayToken(normalized: string): string {
       repaired = repaired.replace(from, to);
     }
   }
-  return repaired;
+  return repairGarbledYearToken(repaired);
+}
+
+/** Fuzzy repair for elderly STT garbling year words (e.g. sechsundfünfozfg → 56). */
+function repairGarbledYearToken(normalized: string): string {
+  if (parseGermanCardinalWord(normalized) !== null) return normalized;
+
+  const compact = normalized.replace(/[^a-z0-9]/g, '');
+  if (!compact) return normalized;
+
+  if (/^sechsund(fuenf|funf|fünf|funf)/.test(compact) && /(zig|zog|zfg|ozfg|sg|fg)$/.test(compact)) {
+    return 'sechsundfünfzig';
+  }
+  if (/^neunzehnhundertsechsund(fuenf|funf|fünf|funf)/.test(compact)) {
+    return 'neunzehnhundertsechsundfünfzig';
+  }
+  if (/^sechund(fuenf|funf|fünf|funf)/.test(compact) && !/^sechsund/.test(compact)) {
+    return 'funfundsechzig';
+  }
+  if (/^(fuenf|funf|fünf|funf)(und)?sechzig$/.test(compact)) {
+    return 'funfundsechzig';
+  }
+
+  return normalized;
 }
 
 function parseMonthToken(normalized: string): number | undefined {
@@ -1392,6 +1435,12 @@ function mergeBirthday(
       parse: existing
         ? ({ status: 'complete', iso: existing } as BirthdayParseResult)
         : ({ status: 'missing', iso: null } as BirthdayParseResult),
+    };
+  }
+  if (isYesLike(latestText) && existing) {
+    return {
+      value: existing,
+      parse: { status: 'complete', iso: existing } as BirthdayParseResult,
     };
   }
   const parsed = parseBirthday(latestText);
@@ -2325,13 +2374,18 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
     session?.pending_birthday_day,
     session?.pending_birthday_month
   );
+  const inVnrBirthdayAuthPhase =
+    lookupFound &&
+    (session?.vnr_awaiting_customer_birthday === true ||
+      session?.vnr_customer_birthday_collected === true ||
+      session?.birthday_customer !== null);
   const input: VerificationVnrBrainInput = {
     ...normalizedRawInput,
     vnr_raw: normalizeVnr(normalizedRawInput.vnr_raw ?? resolvedCandidate),
     vnr_candidate: resolvedCandidate,
     vnr_confirmed:
       normalizedRawInput.vnr_confirmed === true ||
-      (resolvedCandidate !== undefined && isYesLike(latestText))
+      (!inVnrBirthdayAuthPhase && resolvedCandidate !== undefined && isYesLike(latestText))
         ? true
         : normalizedRawInput.vnr_confirmed ?? session?.vnr_confirmed ?? undefined,
     birthday_customer: birthdayMerge.value,
@@ -2442,7 +2496,9 @@ export function runVerificationVnrBrain(rawInput: VerificationVnrBrainInput): Ve
       session.attempts.vnr_request_attempts += 1;
     }
     if (normalizedRawInput.latest_customer_input && isLookupFound(input.get_customer_by_insurance_number_result) && !vnrAuthBirthday) {
-      session.attempts.birthday_collection_attempts += 1;
+      if (!isYesLike(normalizedRawInput.latest_customer_input)) {
+        session.attempts.birthday_collection_attempts += 1;
+      }
     }
   }
 

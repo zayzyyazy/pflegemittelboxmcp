@@ -38,6 +38,18 @@ test('parseVerificationBirthday handles sechzehnter märz neunzehnhundertfünfzi
   assert.equal(parsed.iso, '1950-03-16');
 });
 
+test('parseVerificationBirthday handles garbled STT sechsundfünfozfg', () => {
+  const parsed = parseVerificationBirthday('sechzen märz sechsundfünfozfg');
+  assert.equal(parsed.status, 'complete');
+  assert.equal(parsed.iso, '1956-03-16');
+});
+
+test('parseVerificationBirthday handles garbled STT sechsundfunfzog', () => {
+  const parsed = parseVerificationBirthday('sechzehn märz sechsundfunfzog');
+  assert.equal(parsed.status, 'complete');
+  assert.equal(parsed.iso, '1956-03-16');
+});
+
 test('parseVerificationBirthday handles ordinal month sechzehnter dritter fünfzig', () => {
   const parsed = parseVerificationBirthday('sechzehnter dritter fünfzig');
   assert.equal(parsed.status, 'complete');
