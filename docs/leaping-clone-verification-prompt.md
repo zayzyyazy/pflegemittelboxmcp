@@ -38,9 +38,10 @@ Keine eigenen Wiederholungen, Fallbacks, Erklärungen oder Recovery-Texte.
 ## Ablauf: Split Leaping stages (PHONE / VNR / PLZ)
 
 Leaping routes to **separate Dialogues** after `pmb_verification_method_router`:
-- `active_brain=phone` → PHONE stage → only `pmb_verification_phone_brain`
-- `active_brain=vnr` → VNR stage → only `pmb_verification_vnr_brain`
-- `active_brain=address` → PLZ stage → only `pmb_verification_address_brain`
+- `action_type=TRANSITION`, `leaping_transition=PHONE` → PHONE stage
+- `action_type=TRANSITION`, `leaping_transition=VNR` → VNR stage
+- `action_type=TRANSITION`, `leaping_transition=PLZ` → PLZ stage
+- `action_type=SAY_ONLY` + `say` → method question, stay in router stage
 
 Router returns `active_brain` + empty `say` when phone lookup found — no method question.
 

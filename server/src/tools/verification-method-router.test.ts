@@ -17,7 +17,10 @@ test('phone_lookup_found=true chooses phone path immediately with empty say', ()
   assert.equal(result.active_brain, 'phone');
   assert.equal(result.next_brain, 'pmb_verification_phone_brain');
   assert.equal(result.say, '');
-  assert.equal(result.requires_followup_mcp_call, true);
+  assert.equal(result.action_type, 'TRANSITION');
+  assert.equal(result.leaping_transition, 'PHONE');
+  assert.equal(result.transition_name, 'PHONE');
+  assert.equal(result.requires_followup_mcp_call, false);
   assert.equal(result.session_id_received, true);
 });
 
@@ -83,6 +86,32 @@ test('customer chooses VNR via latest_customer_input', () => {
 
   assert.equal(result.active_brain, 'vnr');
   assert.equal(result.next_brain, 'pmb_verification_vnr_brain');
+  assert.equal(result.action_type, 'TRANSITION');
+  assert.equal(result.leaping_transition, 'VNR');
+});
+
+test('STT typo versichernnummer selects vnr path with transition', () => {
+  const result = runVerificationMethodRouter({
+    session_id: SESSION + '-vnr-typo',
+    phone_lookup_found: false,
+    latest_customer_input: 'versichernnummer',
+  });
+
+  assert.equal(result.active_brain, 'vnr');
+  assert.equal(result.leaping_transition, 'VNR');
+  assert.equal(result.action_type, 'TRANSITION');
+  assert.equal(result.say, '');
+});
+
+test('method question stays SAY_ONLY without transition', () => {
+  const result = runVerificationMethodRouter({
+    session_id: SESSION + '-say-only',
+    phone_lookup_found: false,
+  });
+
+  assert.equal(result.action_type, 'SAY_ONLY');
+  assert.equal(result.leaping_transition, null);
+  assert.equal(result.transition_name, null);
 });
 
 test('customer chooses address via PLZ keyword', () => {
@@ -93,7 +122,8 @@ test('customer chooses address via PLZ keyword', () => {
   });
 
   assert.equal(result.active_brain, 'address');
-  assert.equal(result.next_brain, 'pmb_verification_address_brain');
+  assert.equal(result.leaping_transition, 'PLZ');
+  assert.equal(result.action_type, 'TRANSITION');
 });
 
 test('spoken PLZ selects address path', () => {

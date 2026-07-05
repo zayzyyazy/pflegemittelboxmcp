@@ -21,9 +21,11 @@ export interface VerificationMethodRouterInput {
   customer_intent?: string;
 }
 
+export type LeapingRouterTransition = 'PHONE' | 'VNR' | 'PLZ';
+
 export interface VerificationMethodRouterResult {
   ok: true;
-  action_type: 'SAY_ONLY';
+  action_type: 'SAY_ONLY' | 'TRANSITION';
   say: string;
   active_brain: VerificationPath | null;
   next_brain:
@@ -31,6 +33,9 @@ export interface VerificationMethodRouterResult {
     | 'pmb_verification_address_brain'
     | 'pmb_verification_vnr_brain'
     | null;
+  /** Leaping Dialogue transition name — PHONE | VNR | PLZ */
+  leaping_transition: LeapingRouterTransition | null;
+  transition_name: LeapingRouterTransition | null;
   requires_followup_mcp_call: boolean;
   session_id_received: boolean;
   session_mode: 'session' | 'stateless';
@@ -120,6 +125,12 @@ function looksLikeVnrCandidate(text: string): boolean {
   return /^[A-Z][0-9]{9}$/.test(compact);
 }
 
+const LEAPING_TRANSITION: Record<VerificationPath, LeapingRouterTransition> = {
+  phone: 'PHONE',
+  vnr: 'VNR',
+  address: 'PLZ',
+};
+
 function detectVnrPreference(text: string | undefined): boolean {
   if (!text) return false;
   if (looksLikeVnrCandidate(text)) return true;
@@ -128,6 +139,8 @@ function detectVnrPreference(text: string | undefined): boolean {
     'versichertennummer',
     'versicherungsnummer',
     'versicherten nummer',
+    'versichernnummer',
+    'versichertennummer',
     'krankenversicherungsnummer',
     'krankenkassennummer',
     'vnr',
@@ -135,8 +148,11 @@ function detectVnrPreference(text: string | undefined): boolean {
     'über die nummer',
     'mit der nummer',
     'versicherungs nummer',
+    'versichern',
+    'versicher',
   ];
   if (vnrKeywords.some((keyword) => normalized.includes(keyword))) return true;
+  if (/versicher\w*/.test(normalized) && /nummer/.test(normalized)) return true;
 
   const candidate = normalizeVnrLoose(text).candidate;
   return Boolean(candidate && /^[A-Z][0-9]{9}$/.test(candidate));
@@ -206,13 +222,16 @@ function buildChosenPathResult(
   sessionId: string | undefined,
   sessionReceived: boolean
 ): VerificationMethodRouterResult {
+  const transition = LEAPING_TRANSITION[path];
   return {
     ok: true,
-    action_type: 'SAY_ONLY',
+    action_type: 'TRANSITION',
     say: '',
     active_brain: path,
     next_brain: NEXT_BRAIN[path],
-    requires_followup_mcp_call: true,
+    leaping_transition: transition,
+    transition_name: transition,
+    requires_followup_mcp_call: false,
     session_id_received: sessionReceived,
     session_mode: sessionReceived ? 'session' : 'stateless',
   };
@@ -272,6 +291,8 @@ export function runVerificationMethodRouter(
     say: buildMethodChoiceQuestion(rawInput.customer_intent),
     active_brain: null,
     next_brain: null,
+    leaping_transition: null,
+    transition_name: null,
     requires_followup_mcp_call: true,
     session_id_received: sessionReceived,
     session_mode: sessionReceived ? 'session' : 'stateless',
