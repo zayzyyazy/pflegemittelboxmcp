@@ -15,7 +15,7 @@ export interface VerificationBrainController {
   function_arguments?: Record<string, string>;
   transition_name: 'weiter' | 'nicht_identifiziert' | null;
   requires_followup_mcp_call: boolean;
-  active_brain: 'phone' | 'address' | 'vnr';
+  active_brain: 'phone' | 'address' | 'vnr' | null;
   session_id_received?: boolean;
   session_mode?: 'session' | 'stateless';
   known_values_required_next_call?: Record<string, string>;
@@ -75,7 +75,9 @@ export function splitVerificationBrainResponse(
     function_name: result.function_name ?? result.function_to_call ?? null,
     transition_name: result.transition_name ?? result.transition_to ?? null,
     requires_followup_mcp_call,
-    active_brain: result.active_brain ?? result.method,
+    active_brain:
+      result.active_brain ??
+      (result.next_action === 'ASK_METHOD' ? null : result.method),
   };
 
   if (result.function_arguments && Object.keys(result.function_arguments).length > 0) {

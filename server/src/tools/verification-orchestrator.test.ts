@@ -19,6 +19,35 @@ test('normalizeVnr accepts compact pasted VNR', () => {
   assert.equal(normalized.valid_shape, true);
 });
 
+test('unified flow: STT typo Postleizahl selects address path', () => {
+  const sessionId = `${SESSION}-typo-plz`;
+  runUnifiedVerificationBrain({ session_id: sessionId });
+  const pick = runUnifiedVerificationBrain({
+    session_id: sessionId,
+    latest_customer_input: 'Postleizahl',
+  });
+  assert.equal(pick.active_brain, 'address');
+  assert.equal(pick.next_action, 'ASK_PLZ');
+});
+
+test('unified flow: STT typo Verischern selects VNR path', () => {
+  const sessionId = `${SESSION}-typo-vnr`;
+  runUnifiedVerificationBrain({ session_id: sessionId });
+  const pick = runUnifiedVerificationBrain({
+    session_id: sessionId,
+    latest_customer_input: 'Verischern',
+  });
+  assert.equal(pick.active_brain, 'vnr');
+  assert.equal(pick.next_action, 'ASK_VNR');
+});
+
+test('unified flow: method question does not expose misleading active_brain phone', () => {
+  const ask = runUnifiedVerificationBrain({ session_id: `${SESSION}-ask`, customer_intent: 'boxwechsel' });
+  const leaping = toLeapingVerificationBrainResponse(ask);
+  assert.equal(ask.next_action, 'ASK_METHOD');
+  assert.equal(leaping.active_brain, null);
+});
+
 test('unified flow: no phone match asks method then routes to VNR on choice', () => {
   const ask = runUnifiedVerificationBrain({
     session_id: `${SESSION}-vnr`,

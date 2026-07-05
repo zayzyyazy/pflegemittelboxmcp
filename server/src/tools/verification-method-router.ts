@@ -149,9 +149,11 @@ export function detectVnrPreference(text: string | undefined): boolean {
     'mit der nummer',
     'versicherungs nummer',
     'versichern',
+    'verischern',
     'versicher',
   ];
   if (vnrKeywords.some((keyword) => normalized.includes(keyword))) return true;
+  if (/ver?sich/.test(normalized)) return true;
   if (/versicher\w*/.test(normalized) && /nummer/.test(normalized)) return true;
 
   const candidate = normalizeVnrLoose(text).candidate;
@@ -163,6 +165,9 @@ export function detectAddressPreference(text: string | undefined): boolean {
   const normalized = normalizeText(text);
   const addressKeywords = [
     'postleitzahl',
+    'postleizahl',
+    'postleizal',
+    'postleitzhl',
     'plz',
     'adresse',
     'hausnummer',
@@ -178,6 +183,7 @@ export function detectAddressPreference(text: string | undefined): boolean {
     'mit der adresse',
   ];
   if (addressKeywords.some((keyword) => normalized.includes(keyword))) return true;
+  if (/postleit?z?a?h?l?/.test(normalized) || normalized.includes('postleiz')) return true;
 
   return /\b\d{5}\b/.test(text);
 }
@@ -215,6 +221,11 @@ export function detectPathFromInput(
   }
 
   return null;
+}
+
+/** STT-tolerant method choice parsing for unified brain / router follow-ups. */
+export function detectMethodChoiceAnswer(text: string | undefined): VerificationPath | null {
+  return detectPathFromInput(text, false);
 }
 
 function buildChosenPathResult(

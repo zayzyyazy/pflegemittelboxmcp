@@ -1,6 +1,7 @@
 import {
   buildMethodChoiceQuestion,
   detectAddressPreference,
+  detectMethodChoiceAnswer,
   detectPathFromInput,
   detectVnrPreference,
   type VerificationPath,
@@ -38,6 +39,9 @@ export interface UnifiedVerificationBrainInput {
   customer_requested_human?: boolean;
   office_hours?: boolean;
 }
+
+const METHOD_CHOICE_RETRY_SAY =
+  'Meinten Sie die Versichertennummer oder die Postleitzahl? Bitte antworten Sie mit Versichertennummer oder Postleitzahl.';
 
 function optionalString(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
@@ -81,8 +85,7 @@ export function coerceUnifiedVerificationBrainInput(
 
 function detectVoluntaryPathSwitch(
   currentPath: VerificationPath | null | undefined,
-  latestCustomerInput: string | undefined,
-  phoneLookupFound: boolean
+  latestCustomerInput: string | undefined
 ): VerificationPath | null {
   if (!latestCustomerInput?.trim() || !currentPath) return null;
 
@@ -93,7 +96,6 @@ function detectVoluntaryPathSwitch(
   if (currentPath === 'vnr' && wantsAddress && !wantsVnr) return 'address';
   if (currentPath === 'address' && wantsVnr && !wantsAddress) return 'vnr';
   if (currentPath === 'phone') {
-    if (phoneLookupFound) return null;
     if (wantsAddress && !wantsVnr) return 'address';
     if (wantsVnr && !wantsAddress) return 'vnr';
   }
@@ -110,24 +112,40 @@ function persistPathChoice(
   const session = loadVerificationSessionState(sessionId);
   if (!session) return;
   session.active_verification_path = path;
+  session.awaiting_method_choice = false;
   session.phone_lookup_found = phoneLookupFound;
+  storeVerificationSessionState(sessionId, session);
+}
+
+function markAwaitingMethodChoice(sessionId: string | undefined): void {
+  if (!sessionId) return;
+  const session = loadVerificationSessionState(sessionId);
+  if (!session) return;
+  session.awaiting_method_choice = true;
   storeVerificationSessionState(sessionId, session);
 }
 
 function buildMethodChoiceResult(
   rawInput: UnifiedVerificationBrainInput,
-  sessionReceived: boolean
+  sessionReceived: boolean,
+  retry = false
 ): VerificationMethodBrainResult {
+  if (sessionReceived) {
+    markAwaitingMethodChoice(rawInput.session_id);
+  }
+
   return {
     ok: true,
     method: 'phone',
     active_brain: null,
     action_type: 'SAY_ONLY',
     next_action: 'ASK_METHOD',
-    say: buildMethodChoiceQuestion(rawInput.customer_intent),
-    reason: 'Verification method must be chosen before collecting PLZ, VNR, or birthday.',
+    say: retry ? METHOD_CHOICE_RETRY_SAY : buildMethodChoiceQuestion(rawInput.customer_intent),
+    reason: retry
+      ? 'Customer answer to the method question was not understood; ask again with a shorter prompt.'
+      : 'Verification method must be chosen before collecting PLZ, VNR, or birthday.',
     missing_fields: ['verification_method'],
-    safety_flags: [],
+    safety_flags: retry ? ['method_choice_retry'] : [],
     allowed_to_call_function: false,
     allowed_to_transition: false,
     requires_followup_mcp_call: true,
@@ -166,6 +184,23 @@ function finalizeFallbackToVnr(
   };
 }
 
+function resolveInitialPath(
+  rawInput: UnifiedVerificationBrainInput,
+  session: ReturnType<typeof loadVerificationSessionState>,
+  phoneLookupFound: boolean
+): VerificationPath | null {
+  if (phoneLookupFound) return 'phone';
+
+  const methodAnswer = detectMethodChoiceAnswer(rawInput.latest_customer_input);
+  if (methodAnswer) return methodAnswer;
+
+  if (session?.awaiting_method_choice && rawInput.latest_customer_input) {
+    return null;
+  }
+
+  return detectPathFromInput(rawInput.latest_customer_input, false);
+}
+
 /**
  * Single-dialogue verification orchestrator.
  * Combines method routing, path switching, and phone/address/VNR brain dispatch in one MCP tool.
@@ -181,8 +216,7 @@ export function runUnifiedVerificationBrain(
 
   const switchedPath = detectVoluntaryPathSwitch(
     session?.active_verification_path,
-    rawInput.latest_customer_input,
-    phoneLookupFound
+    rawInput.latest_customer_input
   );
   if (switchedPath) {
     persistPathChoice(sessionId, switchedPath, phoneLookupFound);
@@ -191,20 +225,16 @@ export function runUnifiedVerificationBrain(
   let activePath = switchedPath ?? session?.active_verification_path ?? null;
 
   if (!activePath) {
-    if (phoneLookupFound) {
-      activePath = 'phone';
-      persistPathChoice(sessionId, 'phone', true);
-    } else {
-      const detectedPath = detectPathFromInput(rawInput.latest_customer_input, false);
-      if (detectedPath) {
-        activePath = detectedPath;
-        persistPathChoice(sessionId, detectedPath, false);
-      }
+    const resolvedPath = resolveInitialPath(rawInput, session, phoneLookupFound);
+    if (resolvedPath) {
+      activePath = resolvedPath;
+      persistPathChoice(sessionId, resolvedPath, phoneLookupFound);
     }
   }
 
   if (!activePath) {
-    return buildMethodChoiceResult(rawInput, sessionReceived);
+    const retry = Boolean(session?.awaiting_method_choice && rawInput.latest_customer_input);
+    return buildMethodChoiceResult(rawInput, sessionReceived, retry);
   }
 
   const result = dispatchBrain(activePath, rawInput);

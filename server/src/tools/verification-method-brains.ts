@@ -121,6 +121,7 @@ interface VerificationSessionState extends VerificationSessionStoredValues {
   pending_birthday_day: number | null;
   pending_birthday_month: number | null;
   awaiting_field: AddressAwaitingField | null;
+  awaiting_method_choice: boolean;
   attempts: VerificationSessionAttempts;
   birthday_collected_before_vnr_lookup: boolean;
   vnr_customer_birthday_collected: boolean;
@@ -336,6 +337,7 @@ function emptySessionState(): VerificationSessionState {
     pending_birthday_day: null,
     pending_birthday_month: null,
     awaiting_field: null,
+    awaiting_method_choice: false,
     attempts: emptyAttempts(),
     birthday_collected_before_vnr_lookup: false,
     vnr_customer_birthday_collected: false,
