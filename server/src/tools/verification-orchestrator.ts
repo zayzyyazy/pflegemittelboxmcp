@@ -18,6 +18,10 @@ import {
   type VerificationMethodBrainResult,
 } from './verification-method-brains.js';
 import { resolvePhoneLookupFound } from './leaping-field-bindings.js';
+import {
+  classifyVerificationMethodChoice,
+  methodChoiceClarificationSay,
+} from './verification-speech-normalizer.js';
 
 export interface UnifiedVerificationBrainInput {
   session_id?: string;
@@ -39,12 +43,6 @@ export interface UnifiedVerificationBrainInput {
   customer_requested_human?: boolean;
   office_hours?: boolean;
 }
-
-const METHOD_CHOICE_RETRY_SAY =
-  'Meinten Sie die Versichertennummer oder die Postleitzahl? Bitte antworten Sie mit Versichertennummer oder Postleitzahl.';
-
-const METHOD_CHOICE_CLARIFY_SAY =
-  'Ich habe das leider nicht eindeutig verstanden. Meinten Sie die Versichertennummer oder die Postleitzahl?';
 
 function optionalString(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
@@ -91,6 +89,13 @@ function detectVoluntaryPathSwitch(
   latestCustomerInput: string | undefined
 ): VerificationPath | null {
   if (!latestCustomerInput?.trim() || !currentPath) return null;
+
+  const classified = classifyVerificationMethodChoice(latestCustomerInput);
+  if (classified.path && classified.confidence !== 'low') {
+    if (currentPath === 'vnr' && classified.path === 'address') return 'address';
+    if (currentPath === 'address' && classified.path === 'vnr') return 'vnr';
+    if (currentPath === 'phone') return classified.path;
+  }
 
   const wantsVnr = detectVnrPreference(latestCustomerInput);
   const wantsAddress = detectAddressPreference(latestCustomerInput);
@@ -157,9 +162,7 @@ function buildMethodChoiceResult(
     action_type: 'SAY_ONLY',
     next_action: 'ASK_METHOD',
     say: retry
-      ? attemptCount >= 2
-        ? METHOD_CHOICE_CLARIFY_SAY
-        : METHOD_CHOICE_RETRY_SAY
+      ? methodChoiceClarificationSay(attemptCount)
       : buildMethodChoiceQuestion(rawInput.customer_intent),
     reason: retry
       ? 'Customer answer to the method question was not understood; ask again with a shorter prompt.'
@@ -212,6 +215,11 @@ function resolveInitialPath(
   phoneLookupFound: boolean
 ): VerificationPath | null {
   if (phoneLookupFound) return 'phone';
+
+  const classified = classifyVerificationMethodChoice(rawInput.latest_customer_input);
+  if (classified.path && classified.confidence !== 'low') {
+    return classified.path;
+  }
 
   const methodAnswer = detectMethodChoiceAnswer(rawInput.latest_customer_input);
   if (methodAnswer) return methodAnswer;

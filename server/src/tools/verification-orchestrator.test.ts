@@ -24,7 +24,7 @@ test('unified flow: unclear method answer uses shorter retry not full intro', ()
   runUnifiedVerificationBrain({ session_id: sessionId, customer_intent: 'boxwechsel' });
   const retry = runUnifiedVerificationBrain({
     session_id: sessionId,
-    latest_customer_input: 'Gesundheit',
+    latest_customer_input: 'Physician',
   });
   assert.equal(retry.next_action, 'ASK_METHOD');
   assert.match(retry.say, /Versichertennummer oder die Postleitzahl/i);
