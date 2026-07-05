@@ -48,6 +48,9 @@ import {
   runUnifiedVerificationBrain,
 } from '../tools/verification-orchestrator.js';
 import {
+  runVerificationLogicLayerFromRecord,
+} from '../tools/verification-logic-layer.js';
+import {
   coerceSafeInsuranceLookupInput,
   coerceSafePlzGebLookupInput,
   runSafeGetCustomerByInsuranceNumber,
@@ -233,6 +236,14 @@ const TOOL_DEFS = [
     name: 'pmb_verification_brain',
     description:
       'Unified verification controller for phone, address, and VNR paths in a single Leaping dialogue.',
+    category: 'guardrail',
+    safe: true,
+    inputSchema: LEAPING_VERIFICATION_BRAIN_SCHEMA,
+  },
+  {
+    name: 'pmb_verification_logic',
+    description:
+      'Hybrid verification logic layer: allowed actions and guidance only. Marie generates customer speech.',
     category: 'guardrail',
     safe: true,
     inputSchema: LEAPING_VERIFICATION_BRAIN_SCHEMA,
@@ -444,6 +455,8 @@ apiRouter.post('/tools/:name/test', async (req, res) => {
       output = toDashboardVerificationBrainResponse(
         runUnifiedVerificationBrain(coerceUnifiedVerificationBrainInput(input as Record<string, unknown>))
       );
+    } else if (name === 'pmb_verification_logic') {
+      output = runVerificationLogicLayerFromRecord(input as Record<string, unknown>);
     } else if (name === 'pmb_delivery_status_reasoner') {
       output = runDeliveryStatusReasoner(
         coerceDeliveryStatusReasonerInput(input as Record<string, unknown>)

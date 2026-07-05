@@ -65,6 +65,9 @@ import {
   runUnifiedVerificationBrain,
 } from '../tools/verification-orchestrator.js';
 import {
+  runVerificationLogicLayerFromRecord,
+} from '../tools/verification-logic-layer.js';
+import {
   coerceSafeInsuranceLookupInput,
   coerceSafePlzGebLookupInput,
   runSafeGetCustomerByInsuranceNumber,
@@ -201,6 +204,12 @@ const MCP_TOOLS = [
     name: 'pmb_verification_brain',
     description:
       'Unified verification controller for phone, address, and VNR paths in a single Leaping dialogue.',
+    inputSchema: LEAPING_VERIFICATION_BRAIN_SCHEMA,
+  },
+  {
+    name: 'pmb_verification_logic',
+    description:
+      'Hybrid verification logic layer: returns allowed actions and guidance only. Marie generates speech.',
     inputSchema: LEAPING_VERIFICATION_BRAIN_SCHEMA,
   },
   {
@@ -428,6 +437,15 @@ async function runTool(
       logCall('pmb_verification_brain', input, logged, null, Date.now() - start);
       return {
         content: [{ type: 'text', text: JSON.stringify(toLeapingVerificationBrainResponse(result), null, 2) }],
+      };
+    }
+
+    case 'pmb_verification_logic': {
+      const input = coerceUnifiedVerificationBrainInput(args);
+      const result = runVerificationLogicLayerFromRecord(input as Record<string, unknown>);
+      logCall('pmb_verification_logic', input, result, null, Date.now() - start);
+      return {
+        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
       };
     }
 

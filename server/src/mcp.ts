@@ -53,6 +53,10 @@ import {
   runUnifiedVerificationBrain,
 } from './tools/verification-orchestrator.js';
 import {
+  runVerificationLogicLayer,
+  runVerificationLogicLayerFromRecord,
+} from './tools/verification-logic-layer.js';
+import {
   coerceSafeInsuranceLookupInput,
   coerceSafePlzGebLookupInput,
   runSafeGetCustomerByInsuranceNumber,
@@ -321,6 +325,22 @@ export function createMcpServer(): McpServer {
       logCall('pmb_verification_brain', coerced, logged, null, Date.now() - start);
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(toLeapingVerificationBrainResponse(result), null, 2) }],
+      };
+    }
+  );
+
+  server.tool(
+    'pmb_verification_logic',
+    'Hybrid verification logic layer for Marie-owned speech. Returns allowed actions and guidance only — ' +
+      'never customer-facing scripts. Same session state as pmb_verification_brain; use action + guidance in Leaping.',
+    leapingVerificationBrainZod,
+    async (input) => {
+      const start = Date.now();
+      const coerced = coerceUnifiedVerificationBrainInput(input as Record<string, unknown>);
+      const result = runVerificationLogicLayer(coerced);
+      logCall('pmb_verification_logic', coerced, result, null, Date.now() - start);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
       };
     }
   );

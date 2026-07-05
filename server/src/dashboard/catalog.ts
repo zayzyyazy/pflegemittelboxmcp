@@ -43,6 +43,9 @@ import {
   runUnifiedVerificationBrain,
 } from '../tools/verification-orchestrator.js';
 import {
+  runVerificationLogicLayerFromRecord,
+} from '../tools/verification-logic-layer.js';
+import {
   coerceSafeInsuranceLookupInput,
   coerceSafePlzGebLookupInput,
   runSafeGetCustomerByInsuranceNumber,
@@ -232,6 +235,14 @@ export const TOOL_DEFS = [
     inputSchema: LEAPING_VERIFICATION_BRAIN_SCHEMA,
   },
   {
+    name: 'pmb_verification_logic',
+    description:
+      'Hybrid verification logic layer: allowed actions and guidance only. Marie generates customer speech.',
+    category: 'guardrail',
+    safe: true,
+    inputSchema: LEAPING_VERIFICATION_BRAIN_SCHEMA,
+  },
+  {
     name: 'pmb_delivery_status_reasoner',
     description:
       'Deterministic delivery-status reasoner that returns a safe exact answer based on status, approval, and shipment history only.',
@@ -345,6 +356,8 @@ export async function runDashboardTool(name: string, input: Record<string, unkno
       output = toDashboardVerificationBrainResponse(
         runUnifiedVerificationBrain(coerceUnifiedVerificationBrainInput(input))
       );
+    } else if (name === 'pmb_verification_logic') {
+      output = runVerificationLogicLayerFromRecord(input);
     } else if (name === 'pmb_delivery_status_reasoner') {
       output = runDeliveryStatusReasoner(coerceDeliveryStatusReasonerInput(input));
     } else if (name === 'pmb_post_call_alert_detector') {

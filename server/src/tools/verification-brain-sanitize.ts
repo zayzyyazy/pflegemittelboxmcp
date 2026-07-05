@@ -160,6 +160,7 @@ export function sanitizeVerificationBrainSplitResponse(
 export function sanitizeMcpToolInput(toolName: string, input: unknown): unknown {
   if (
     toolName === 'pmb_verification_brain' ||
+    toolName === 'pmb_verification_logic' ||
     toolName === 'pmb_verification_phone_brain' ||
     toolName === 'pmb_verification_address_brain' ||
     toolName === 'pmb_verification_vnr_brain'
@@ -229,7 +230,9 @@ export function extractMcpCallLogMeta(
   const controller = readController(output);
   if (controller) {
     if (typeof controller.active_brain === 'string') meta.active_brain = controller.active_brain;
+    if (typeof controller.active_path === 'string') meta.active_brain = controller.active_path;
     if (typeof controller.action_type === 'string') meta.action_type = controller.action_type;
+    if (typeof controller.action === 'string') meta.action_type = controller.action;
     if (typeof controller.function_name === 'string') meta.function_name = controller.function_name;
     if (controller.function_name === null) meta.function_name = null;
     if (typeof controller.transition_name === 'string') meta.transition_name = controller.transition_name;
