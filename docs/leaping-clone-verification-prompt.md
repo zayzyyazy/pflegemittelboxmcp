@@ -35,6 +35,19 @@ Keine eigenen Wiederholungen, Fallbacks, Erklärungen oder Recovery-Texte.
 
 ---
 
+## Ablauf: Split Leaping stages (PHONE / VNR / PLZ)
+
+Leaping routes to **separate Dialogues** after `pmb_verification_method_router`:
+- `active_brain=phone` → PHONE stage → only `pmb_verification_phone_brain`
+- `active_brain=vnr` → VNR stage → only `pmb_verification_vnr_brain`
+- `active_brain=address` → PLZ stage → only `pmb_verification_address_brain`
+
+Router returns `active_brain` + empty `say` when phone lookup found — no method question.
+
+Phone brain accepts `id_phone` / `id` from Leaping when `phone_lookup_found` boolean is not bound.
+
+---
+
 ## Ablauf: Function vor Dialog
 
 **Vor** der Kundenidentifikations-Dialogstage muss ein **Function Node** `pmb_verification_method_router` laufen.

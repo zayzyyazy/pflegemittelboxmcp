@@ -52,6 +52,53 @@ export const LEAPING_VERIFICATION_METHOD_ROUTER_SCHEMA = {
   required: [] as string[],
 };
 
+/** Phone stage — Leaping binds id_phone after get_customer_by_phone, not always phone_lookup_found. */
+export const LEAPING_VERIFICATION_PHONE_BRAIN_SCHEMA = {
+  type: 'object' as const,
+  properties: {
+    session_id: { type: 'string', description: 'Stable call session id (leaping_conversation_id_hex).' },
+    latest_customer_input: {
+      type: 'string',
+      description: 'Customer answer to the current birthday verification question only.',
+    },
+    phone_lookup_found: {
+      type: 'string',
+      description: 'Optional boolean/string flag when Leaping binds it after get_customer_by_phone.',
+    },
+    id_phone: {
+      ...customerIdFieldSchema,
+      description: 'Customer id from get_customer_by_phone — preferred phone-found signal for split PHONE stage.',
+    },
+    id: {
+      ...customerIdFieldSchema,
+      description: 'Customer id after phone lookup when id_phone is not bound separately.',
+    },
+    get_customer_by_phone_result: {
+      ...lookupResultFieldSchema,
+      description: 'Native get_customer_by_phone result summary or error text.',
+    },
+    birthday_customer: {
+      type: 'string',
+      description: 'Customer-provided birthday for check_birthday (not CRM birthday_system).',
+    },
+    check_birthday_result: {
+      type: 'string',
+      description: 'Native check_birthday result after MCP requested check_birthday.',
+    },
+    check_birthday_error: {
+      type: 'string',
+      description: 'Native check_birthday error message, if any.',
+    },
+    birthday_system_available: {
+      type: 'boolean',
+      description: 'True when birthday_system is populated and check_birthday can run.',
+    },
+    customer_requested_human: { type: 'boolean', description: 'Customer explicitly requested a human agent.' },
+    office_hours: { type: 'boolean', description: 'Whether office hours apply for transfer.' },
+  },
+  required: [] as string[],
+};
+
 export const LEAPING_VERIFICATION_BRAIN_SCHEMA = {
   type: 'object' as const,
   properties: {

@@ -24,7 +24,10 @@ import {
   coerceVerificationMethodRouterInput,
   runVerificationMethodRouter,
 } from '../tools/verification-method-router.js';
-import { LEAPING_VERIFICATION_METHOD_ROUTER_SCHEMA } from '../tools/verification-leaping-schemas.js';
+import {
+  LEAPING_VERIFICATION_METHOD_ROUTER_SCHEMA,
+  LEAPING_VERIFICATION_PHONE_BRAIN_SCHEMA,
+} from '../tools/verification-leaping-schemas.js';
 import {
   coerceVerificationAddressBrainInput,
   coerceVerificationPhoneBrainInput,
@@ -166,23 +169,7 @@ export const TOOL_DEFS = [
     description: 'Deterministic phone verification controller. Use only after get_customer_by_phone already found a customer.',
     category: 'guardrail',
     safe: true,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        session_id: { type: 'string' },
-        phone_lookup_found: { type: 'boolean' },
-        latest_customer_input: { type: 'string' },
-        birthday_customer: { type: 'string' },
-        check_birthday_result: { type: 'string' },
-        check_birthday_error: { type: 'string' },
-        birthday_system_available: { type: 'boolean' },
-        birthday_request_count: { type: 'number' },
-        birthday_check_attempts: { type: 'number' },
-        customer_requested_human: { type: 'boolean' },
-        office_hours: { type: 'boolean' },
-      },
-      required: [],
-    },
+    inputSchema: LEAPING_VERIFICATION_PHONE_BRAIN_SCHEMA,
   },
   {
     name: 'pmb_verification_address_brain',

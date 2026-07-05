@@ -4,6 +4,7 @@ import {
   hasBirthdaySystemSignal,
   inferVnrInsuranceLookupResult,
   leapingVnrLookupFieldsPresent,
+  resolvePhoneLookupFound,
 } from './leaping-field-bindings.js';
 import { parseVnrUtterance } from './verification-vnr-parser.js';
 
@@ -1612,10 +1613,13 @@ export function coerceVerificationVnrBrainInput(input: Record<string, unknown>):
 }
 
 export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput): VerificationMethodBrainResult {
+  const inputRecord = rawInput as unknown as Record<string, unknown>;
   const session = getSessionState(rawInput.session_id);
+  const resolvedPhoneLookup = resolvePhoneLookupFound(inputRecord, session);
+
   if (session) {
     session.active_verification_path = 'phone';
-    if (rawInput.phone_lookup_found !== undefined) session.phone_lookup_found = rawInput.phone_lookup_found;
+    session.phone_lookup_found = resolvedPhoneLookup;
   }
 
   const phoneSafetyFlags: string[] = [];
@@ -1629,7 +1633,7 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
   );
   const input: VerificationPhoneBrainInput = {
     ...rawInput,
-    phone_lookup_found: rawInput.phone_lookup_found ?? session?.phone_lookup_found ?? undefined,
+    phone_lookup_found: resolvedPhoneLookup,
     birthday_customer: birthdayMerge.value,
     check_birthday_result: mergeNormalizedCheckBirthdayResult(
       rawInput.check_birthday_result,
@@ -1689,11 +1693,12 @@ export function runVerificationPhoneBrain(rawInput: VerificationPhoneBrainInput)
   if (input.phone_lookup_found !== true) {
     return finalizePhone(makeResult('phone', {
       ok: false,
-      next_action: 'WRONG_METHOD',
-      say: '',
-      reason: 'Phone verification brain can only be used after get_customer_by_phone found a customer.',
-      missing_fields: [],
-      safety_flags: ['wrong_method_phone_lookup_not_found'],
+      next_action: 'TRANSITION_NICHT_IDENTIFIZIERT',
+      say: 'Ich konnte Sie leider nicht über die Telefonnummer zuordnen.',
+      reason: 'Phone verification stage entered without a successful phone lookup.',
+      missing_fields: ['phone_lookup_found'],
+      safety_flags: ['phone_lookup_not_found'],
+      transition_to: 'nicht_identifiziert',
     }));
   }
 

@@ -43,6 +43,7 @@ import {
 } from '../tools/verification-method-router.js';
 import {
   LEAPING_VERIFICATION_BRAIN_SCHEMA,
+  LEAPING_VERIFICATION_PHONE_BRAIN_SCHEMA,
   LEAPING_VERIFICATION_VNR_BRAIN_SCHEMA,
   LEAPING_VERIFICATION_METHOD_ROUTER_SCHEMA,
 } from '../tools/verification-leaping-schemas.js';
@@ -182,7 +183,7 @@ const MCP_TOOLS = [
     name: 'pmb_verification_phone_brain',
     description:
       'Deterministic phone verification controller. Use only after get_customer_by_phone already found a customer.',
-    inputSchema: LEAPING_VERIFICATION_BRAIN_SCHEMA,
+    inputSchema: LEAPING_VERIFICATION_PHONE_BRAIN_SCHEMA,
   },
   {
     name: 'pmb_verification_address_brain',

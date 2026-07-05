@@ -733,10 +733,10 @@ const STRESS_SCENARIOS: StressScenario[] = [
     ],
     expect: {
       custom: (r) => {
-        if (r.next_action === 'WRONG_METHOD') return null;
+        if (r.next_action === 'TRANSITION_NICHT_IDENTIFIZIERT') return null;
         if (r.next_action === 'CALL_CHECK_BIRTHDAY' && r.function_arguments?.birthday === '1956-03-16') return null;
         if (r.next_action === 'ASK_BIRTHDAY') return null;
-        return `expected WRONG_METHOD or safe phone birthday handoff, got ${r.next_action}`;
+        return `expected safe phone handoff or nicht_identifiziert, got ${r.next_action}`;
       },
     },
   },

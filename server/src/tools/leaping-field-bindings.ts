@@ -76,6 +76,28 @@ export function inferPhoneLookupFoundFromLeapingInput(
   return undefined;
 }
 
+export interface PhoneLookupSessionContext {
+  active_verification_path?: 'phone' | 'address' | 'vnr' | null;
+  phone_lookup_found?: boolean | null;
+}
+
+/**
+ * Resolve whether phone lookup succeeded for router / phone-brain.
+ * Leaping often binds id_phone instead of phone_lookup_found.
+ * Split-stage flow: trust router session path when Leaping routed to PHONE dialogue.
+ */
+export function resolvePhoneLookupFound(
+  input: Record<string, unknown>,
+  session?: PhoneLookupSessionContext | null
+): boolean {
+  const inferred = inferPhoneLookupFoundFromLeapingInput(input);
+  if (inferred === true) return true;
+  if (inferred === false) return false;
+  if (session?.phone_lookup_found === true) return true;
+  if (session?.active_verification_path === 'phone') return true;
+  return false;
+}
+
 export interface VnrLookupInferenceContext {
   vnr_confirmed?: boolean | null;
   vnr_awaiting_insurance_lookup_result?: boolean;

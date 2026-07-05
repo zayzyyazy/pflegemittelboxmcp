@@ -5,7 +5,10 @@ import {
   type VerificationSessionState,
 } from './verification-method-brains.js';
 import { coercePhoneLookupFound } from './lookup-result-sanitize.js';
-import { inferPhoneLookupFoundFromLeapingInput } from './leaping-field-bindings.js';
+import {
+  inferPhoneLookupFoundFromLeapingInput,
+  resolvePhoneLookupFound,
+} from './leaping-field-bindings.js';
 
 export type VerificationPath = 'phone' | 'address' | 'vnr';
 
@@ -246,7 +249,10 @@ export function runVerificationMethodRouter(
     return buildChosenPathResult(session.active_verification_path, sessionId, sessionReceived);
   }
 
-  const phoneLookupFound = coercePhoneLookupFound(rawInput.phone_lookup_found);
+  const phoneLookupFound = resolvePhoneLookupFound(
+    rawInput as unknown as Record<string, unknown>,
+    session
+  );
 
   if (phoneLookupFound === true) {
     persistPathChoice(sessionId, session, 'phone', true);

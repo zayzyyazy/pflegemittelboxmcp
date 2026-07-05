@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   inferPhoneLookupFoundFromLeapingInput,
   inferVnrInsuranceLookupResult,
+  resolvePhoneLookupFound,
 } from './leaping-field-bindings.js';
 import { coercePhoneLookupFound } from './lookup-result-sanitize.js';
 import { coerceVerificationMethodRouterInput, runVerificationMethodRouter } from './verification-method-router.js';
@@ -32,6 +33,17 @@ test('inferPhoneLookupFoundFromLeapingInput rejects phone lookup error', () => {
     inferPhoneLookupFoundFromLeapingInput({ get_customer_by_phone_result: 'Kein Kunde gefunden' }),
     false
   );
+});
+
+test('resolvePhoneLookupFound trusts router phone session path', () => {
+  assert.equal(
+    resolvePhoneLookupFound({}, { active_verification_path: 'phone' }),
+    true
+  );
+});
+
+test('resolvePhoneLookupFound uses id_phone', () => {
+  assert.equal(resolvePhoneLookupFound({ id_phone: '107484' }, null), true);
 });
 
 test('router id_phone routes directly to phone brain', () => {
