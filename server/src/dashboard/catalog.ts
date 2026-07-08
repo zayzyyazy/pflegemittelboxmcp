@@ -48,6 +48,10 @@ import {
   coerceAnbieterCancellationDraftInput,
   runAnbieterCancellationDraft,
 } from '../tools/anbieter-cancellation-draft.js';
+import {
+  coerceTicketAddressVerifyInput,
+  runTicketAddressVerify,
+} from '../tools/ticket-address-verify.js';
 
 export function sanitizeGuardrailInput(input: Record<string, unknown>) {
   const nullableString = (value: unknown): string | null => {
@@ -287,6 +291,21 @@ export const TOOL_DEFS = [
     },
   },
   {
+    name: 'pmb_verify_ticket_address',
+    description: 'Post-call PLZ/Ort/street safety check for ticket addresses. Never writes CRM data.',
+    category: 'post_call',
+    safe: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plz: { type: 'string', description: 'German postal code from the call.' },
+        ort: { type: 'string', description: 'City/locality from the call.' },
+        street: { type: 'string', description: 'Street and house number from the call.' },
+      },
+      required: ['plz', 'ort', 'street'],
+    },
+  },
+  {
     name: 'pmb_safe_get_customer_by_plz_geb',
     description:
       'Safe CRM lookup by PLZ, house number, and birthday. Returns only { found, id?, birthday_present? }.',
@@ -407,6 +426,8 @@ export async function runDashboardTool(name: string, input: Record<string, unkno
       output = result;
     } else if (name === 'pmb_draft_anbieter_cancellation') {
       output = await runAnbieterCancellationDraft(coerceAnbieterCancellationDraftInput(input));
+    } else if (name === 'pmb_verify_ticket_address') {
+      output = await runTicketAddressVerify(coerceTicketAddressVerifyInput(input));
     } else if (name === 'pmb_safe_get_customer_by_plz_geb') {
       output = await runSafeGetCustomerByPlzGeb(coerceSafePlzGebLookupInput(input));
     } else if (name === 'pmb_safe_get_customer_by_insurance_number') {

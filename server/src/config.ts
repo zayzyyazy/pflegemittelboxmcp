@@ -48,6 +48,14 @@ const envSchema = z
     OPENAI_MODEL: z.string().trim().min(1).default('gpt-4.1-mini'),
     OPENAI_BASE_URL: z.string().trim().url().default('https://api.openai.com/v1'),
     BRAVE_SEARCH_API_KEY: z.string().trim().min(1).optional(),
+    ADDRESS_GEOCODER_PROVIDER: z.enum(['nominatim', 'google']).default('nominatim'),
+    GOOGLE_GEOCODING_API_KEY: z.string().trim().min(1).optional(),
+    NOMINATIM_USER_AGENT: z
+      .string()
+      .trim()
+      .min(1)
+      .default('PflegemittelboxMCP/0.1 (ticket-address-verify)'),
+    OPENPLZ_API_BASE: z.string().trim().url().default('https://openplzapi.org'),
   })
   .superRefine((env, ctx) => {
     if (env.NODE_ENV === 'production' && env.MCP_AUTH_ENABLED !== true) {

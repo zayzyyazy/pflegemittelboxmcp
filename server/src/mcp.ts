@@ -60,6 +60,10 @@ import {
   coerceAnbieterCancellationDraftInput,
   runAnbieterCancellationDraft,
 } from './tools/anbieter-cancellation-draft.js';
+import {
+  coerceTicketAddressVerifyInput,
+  runTicketAddressVerify,
+} from './tools/ticket-address-verify.js';
 
 // Active legacy SSE sessions — used by POST /mcp/messages
 export const sseTransports: Record<string, SSEServerTransport> = {};
@@ -500,6 +504,23 @@ export function createMcpServer(): McpServer {
       const coerced = coerceAnbieterCancellationDraftInput(input as Record<string, unknown>);
       const result = await runAnbieterCancellationDraft(coerced);
       logCall('pmb_draft_anbieter_cancellation', coerced, result, null, Date.now() - start);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'pmb_verify_ticket_address',
+    'Post-call address safety check for tickets. Validates PLZ↔Ort via OpenPLZ, then street via Nominatim/Google. Never writes CRM data.',
+    {
+      plz: z.string().describe('German postal code as captured from the call.'),
+      ort: z.string().describe('City/locality as captured from the call.'),
+      street: z.string().describe('Street and house number as captured from the call.'),
+    },
+    async (input) => {
+      const start = Date.now();
+      const coerced = coerceTicketAddressVerifyInput(input as Record<string, unknown>);
+      const result = await runTicketAddressVerify(coerced);
+      logCall('pmb_verify_ticket_address', coerced, result, null, Date.now() - start);
       return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
     }
   );

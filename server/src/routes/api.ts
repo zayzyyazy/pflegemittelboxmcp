@@ -53,6 +53,10 @@ import {
   coerceAnbieterCancellationDraftInput,
   runAnbieterCancellationDraft,
 } from '../tools/anbieter-cancellation-draft.js';
+import {
+  coerceTicketAddressVerifyInput,
+  runTicketAddressVerify,
+} from '../tools/ticket-address-verify.js';
 import { getPostCallMonitorState, runPostCallMonitorCycle } from '../post-call-monitor.js';
 
 export const apiRouter = Router();
@@ -360,6 +364,21 @@ const TOOL_DEFS = [
     },
   },
   {
+    name: 'pmb_verify_ticket_address',
+    description: 'Post-call PLZ/Ort/street safety check for ticket addresses. Never writes CRM data.',
+    category: 'post_call',
+    safe: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plz: { type: 'string', description: 'German postal code from the call.' },
+        ort: { type: 'string', description: 'City/locality from the call.' },
+        street: { type: 'string', description: 'Street and house number from the call.' },
+      },
+      required: ['plz', 'ort', 'street'],
+    },
+  },
+  {
     name: 'pmb_safe_get_customer_by_plz_geb',
     description:
       'Safe CRM lookup by PLZ, house number, and birthday. Proxies Marie and returns only { found, id?, birthday_present? }.',
@@ -524,6 +543,10 @@ apiRouter.post('/tools/:name/test', async (req, res) => {
     } else if (name === 'pmb_draft_anbieter_cancellation') {
       output = await runAnbieterCancellationDraft(
         coerceAnbieterCancellationDraftInput(input as Record<string, unknown>)
+      );
+    } else if (name === 'pmb_verify_ticket_address') {
+      output = await runTicketAddressVerify(
+        coerceTicketAddressVerifyInput(input as Record<string, unknown>)
       );
     } else if (name === 'pmb_safe_get_customer_by_plz_geb') {
       output = await runSafeGetCustomerByPlzGeb(
