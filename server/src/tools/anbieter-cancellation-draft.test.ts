@@ -64,6 +64,79 @@ test('findFuzzyAnbieterContact returns close cache row', () => {
   assert.equal(hit?.row.email, 'kuendigung@aok-pflegebox.de');
 });
 
+test('extractContactFromHtml rejects third-party magazine email for Sanubi', () => {
+  const html = `
+    <html><body>
+      <h1>Sanubi Pflegebox kündigen</h1>
+      <p>Fragen? hilfe@pflegekompassmagazin.de</p>
+    </body></html>
+  `;
+  const extracted = extractContactFromHtml(
+    html,
+    'https://www.pflegekompassmagazin.de/sanubi-kuendigen/',
+    'sanubi'
+  );
+  assert.equal(extracted.email, null);
+  assert.equal(extracted.confidence, 'low');
+});
+
+test('extractContactFromHtml accepts official Sanubi email', () => {
+  const html = `
+    <html><body>
+      <h1>Pflegebox kündigen</h1>
+      <p>Schreiben Sie an info@sanubi.de</p>
+    </body></html>
+  `;
+  const extracted = extractContactFromHtml(html, 'https://sanubi.de/faq/', 'sanubi');
+  assert.equal(extracted.email, 'info@sanubi.de');
+  assert.ok(['high', 'medium'].includes(extracted.confidence));
+});
+
+test('runAnbieterCancellationDraft ignores bad cache and re-searches', async () => {
+  const rows: AnbieterContactRow[] = [
+    {
+      anbieter_name_normalized: 'sanubi',
+      anbieter_name_display: 'Sanubi',
+      email: 'hilfe@pflegekompassmagazin.de',
+      fax: null,
+      postal_address: null,
+      confidence: 'high',
+      human_confirmed: 0,
+      source_url: 'https://www.pflegekompassmagazin.de/sanubi-kuendigen/',
+      last_verified_at: null,
+      updated_at: '2026-01-01T00:00:00Z',
+    },
+  ];
+
+  let searched = false;
+  const result = await runAnbieterCancellationDraft(
+    { anbieter_name: 'Sanubi' },
+    {
+      listContacts: () => rows,
+      getContactByNormalized: (normalized) =>
+        rows.find((row) => row.anbieter_name_normalized === normalized) ?? null,
+      discoverContact: async () => {
+        searched = true;
+        return {
+          contact: {
+            email: 'info@sanubi.de',
+            fax: null,
+            postal_address: null,
+            confidence: 'medium',
+            source_url: 'https://sanubi.de/faq/',
+          },
+          search_provider: 'brave',
+        };
+      },
+      upsertContact: () => undefined,
+    }
+  );
+
+  assert.equal(searched, true);
+  assert.equal(result.cache_hit, false);
+  assert.equal(result.draft.to, 'info@sanubi.de');
+});
+
 test('runAnbieterCancellationDraft uses confirmed cache without web search', async () => {
   const rows: AnbieterContactRow[] = [
     {

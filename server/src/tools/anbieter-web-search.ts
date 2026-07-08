@@ -1,4 +1,9 @@
-import { extractContactFromHtml } from './anbieter-contact-extract.js';
+import {
+  extractContactFromHtml,
+  isAggregatorHost,
+  hostContainsAnbieterToken,
+  anbieterDomainTokens,
+} from './anbieter-contact-extract.js';
 import type { ExtractedAnbieterContact } from './anbieter-contact-extract.js';
 
 export interface WebSearchResult {
@@ -146,12 +151,8 @@ export async function fetchPageHtml(url: string, config: AnbieterWebSearchConfig
   return response.text();
 }
 
-function rankSearchResults(results: WebSearchResult[], anbieterNormalized: string): WebSearchResult[] {
-  const tokens = anbieterNormalized.split(/\s+/).filter((t) => t.length >= 3);
-  return [...results].sort((a, b) => scoreResult(b, tokens) - scoreResult(a, tokens));
-}
-
-function scoreResult(result: WebSearchResult, tokens: string[]): number {
+function scoreResult(result: WebSearchResult, anbieterNormalized: string): number {
+  const tokens = anbieterDomainTokens(anbieterNormalized);
   const haystack = `${result.title} ${result.url} ${result.description}`.toLowerCase();
   let score = 0;
   for (const token of tokens) {
@@ -159,8 +160,22 @@ function scoreResult(result: WebSearchResult, tokens: string[]): number {
   }
   if (haystack.includes('kuendig') || haystack.includes('kündig')) score += 2;
   if (haystack.includes('pflegebox')) score += 1;
-  if (/(pflege|apotheke|versicherung|kasse)\./i.test(result.url)) score += 1;
+
+  try {
+    const host = new URL(result.url).hostname.replace(/^www\./, '').toLowerCase();
+    if (hostContainsAnbieterToken(host, anbieterNormalized)) score += 12;
+    if (isAggregatorHost(host)) score -= 15;
+  } catch {
+    // ignore
+  }
+
   return score;
+}
+
+function rankSearchResults(results: WebSearchResult[], anbieterNormalized: string): WebSearchResult[] {
+  return [...results].sort(
+    (a, b) => scoreResult(b, anbieterNormalized) - scoreResult(a, anbieterNormalized)
+  );
 }
 
 export async function discoverAnbieterContact(
@@ -194,7 +209,7 @@ export async function discoverAnbieterContact(
     source_url: null,
   };
 
-  for (const result of ranked.slice(0, 3)) {
+  for (const result of ranked.slice(0, 5)) {
     try {
       const html = await fetchPageHtml(result.url, config);
       if (!html) continue;

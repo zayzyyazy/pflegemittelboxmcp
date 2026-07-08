@@ -10,6 +10,7 @@ import {
   normalizeAnbieterName,
   trigramSimilarity,
 } from './anbieter-name.js';
+import { isPlausibleAnbieterEmail } from './anbieter-contact-extract.js';
 import { discoverAnbieterContact } from './anbieter-web-search.js';
 import type { AnbieterWebSearchConfig } from './anbieter-web-search.js';
 
@@ -140,12 +141,21 @@ export async function runAnbieterCancellationDraft(
   const cached = exact ?? fuzzy?.row ?? null;
 
   if (cached?.email) {
-    cacheHit = true;
-    source = 'cache';
-    email = cached.email;
-    confidence = cached.confidence ?? 'medium';
-    humanConfirmed = cached.human_confirmed === 1;
-  } else {
+    const cachePlausible = isPlausibleAnbieterEmail(
+      cached.email,
+      normalized,
+      cached.source_url ?? `https://${normalized.replace(/\s+/g, '')}.de`
+    );
+    if (cachePlausible) {
+      cacheHit = true;
+      source = 'cache';
+      email = cached.email;
+      confidence = cached.confidence ?? 'medium';
+      humanConfirmed = cached.human_confirmed === 1;
+    }
+  }
+
+  if (!email) {
     const discovered = await resolved.discoverContact(
       input.anbieter_name,
       normalized,
@@ -156,17 +166,19 @@ export async function runAnbieterCancellationDraft(
     confidence = discovered.contact.confidence;
     source = email ? 'web_search' : 'not_found';
 
-    resolved.upsertContact({
-      anbieter_name_normalized: normalized,
-      anbieter_name_display: input.anbieter_name.trim(),
-      email,
-      fax: discovered.contact.fax,
-      postal_address: discovered.contact.postal_address,
-      confidence,
-      human_confirmed: false,
-      source_url: discovered.contact.source_url,
-      last_verified_at: new Date().toISOString(),
-    });
+    if (email) {
+      resolved.upsertContact({
+        anbieter_name_normalized: normalized,
+        anbieter_name_display: input.anbieter_name.trim(),
+        email,
+        fax: discovered.contact.fax,
+        postal_address: discovered.contact.postal_address,
+        confidence,
+        human_confirmed: false,
+        source_url: discovered.contact.source_url,
+        last_verified_at: new Date().toISOString(),
+      });
+    }
   }
 
   const needsHumanReview = source !== 'cache' || !humanConfirmed || !email;
