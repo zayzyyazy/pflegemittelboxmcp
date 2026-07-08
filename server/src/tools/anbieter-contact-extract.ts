@@ -55,6 +55,25 @@ function decodeBasicHtmlEntities(text: string): string {
     .replace(/&gt;/gi, '>');
 }
 
+/** Decode common anti-spam email forms: info[at]sanubi.de, service{at]sanubi.com */
+export function deobfuscateEmailsInText(text: string): string {
+  return text.replace(
+    /([a-z0-9._%+-]+)\s*(?:\[at\]|\(at\)|\{at\]|\{at\}|\[at\})\s*([a-z0-9.-]+\.[a-z]{2,})/gi,
+    '$1@$2'
+  );
+}
+
+function extractMailtoEmailsFromHtml(html: string): string[] {
+  const emails: string[] = [];
+  const pattern = /href\s*=\s*["']mailto:([^"'?]+)/gi;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(html)) !== null) {
+    const candidate = decodeURIComponent(match[1].trim()).toLowerCase();
+    if (candidate.includes('@')) emails.push(candidate);
+  }
+  return emails;
+}
+
 function stripHtml(html: string): string {
   return decodeBasicHtmlEntities(
     html
@@ -160,8 +179,18 @@ function scoreEmail(email: string, anbieterNormalized: string, pageText: string,
 }
 
 export function extractEmailsFromText(text: string): string[] {
-  const matches = text.match(EMAIL_REGEX) ?? [];
+  const normalized = deobfuscateEmailsInText(decodeBasicHtmlEntities(text));
+  const matches = normalized.match(EMAIL_REGEX) ?? [];
   const unique = [...new Set(matches.map((m) => m.toLowerCase()))];
+  return unique.filter((email) => !BLOCKED_EMAIL_DOMAINS.has(domainFromEmail(email)));
+}
+
+export function extractEmailsFromHtml(html: string): string[] {
+  const mailto = extractMailtoEmailsFromHtml(html);
+  const stripped = stripHtml(html);
+  const deobfuscated = deobfuscateEmailsInText(stripped);
+  const fromText = deobfuscated.match(EMAIL_REGEX) ?? [];
+  const unique = [...new Set([...mailto, ...fromText].map((m) => m.toLowerCase()))];
   return unique.filter((email) => !BLOCKED_EMAIL_DOMAINS.has(domainFromEmail(email)));
 }
 
@@ -171,7 +200,7 @@ export function extractContactFromHtml(
   anbieterNormalized: string
 ): ExtractedAnbieterContact {
   const text = stripHtml(html);
-  const emails = extractEmailsFromText(text);
+  const emails = extractEmailsFromHtml(html);
   const urlLower = pageUrl.toLowerCase();
   const textLower = text.toLowerCase();
 

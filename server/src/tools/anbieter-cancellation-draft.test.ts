@@ -80,6 +80,20 @@ test('extractContactFromHtml rejects third-party magazine email for Sanubi', () 
   assert.equal(extracted.confidence, 'low');
 });
 
+test('extractEmailsFromText decodes info[at]sanubi.de obfuscation', () => {
+  const emails = extractEmailsFromText('Bitte schreiben Sie an info[at]sanubi.de');
+  assert.deepEqual(emails, ['info@sanubi.de']);
+});
+
+test('extractContactFromHtml decodes service{at]sanubi.com obfuscation', () => {
+  const extracted = extractContactFromHtml(
+    '<p>service{at]sanubi.com</p>',
+    'https://sanubi.de/kontakt/',
+    'sanubi'
+  );
+  assert.equal(extracted.email, 'service@sanubi.com');
+});
+
 test('extractContactFromHtml accepts official Sanubi email', () => {
   const html = `
     <html><body>

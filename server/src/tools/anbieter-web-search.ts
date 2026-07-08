@@ -224,6 +224,15 @@ export async function discoverAnbieterContact(
     }
   }
 
+  if (!best.email) {
+    const guessed = await tryExtractFromUrls(
+      buildOfficialGuessUrls(anbieterNormalized).slice(0, 6),
+      anbieterNormalized,
+      config
+    );
+    if (guessed.email) best = guessed;
+  }
+
   return { contact: best, search_provider: provider };
 }
 
@@ -231,4 +240,50 @@ function confidenceRank(value: 'high' | 'medium' | 'low'): number {
   if (value === 'high') return 3;
   if (value === 'medium') return 2;
   return 1;
+}
+
+function buildOfficialGuessUrls(anbieterNormalized: string): string[] {
+  const compact = anbieterNormalized.replace(/\s+/g, '');
+  const hyphenated = anbieterNormalized.replace(/\s+/g, '-');
+  const bases = [...new Set([compact, hyphenated].filter((value) => value.length >= 3))];
+  const paths = ['/faq/', '/kontakt/', '/kuendigen/', '/vertragskuendigung/'];
+  const urls: string[] = [];
+  for (const base of bases) {
+    for (const path of paths) {
+      urls.push(`https://${base}.de${path}`);
+      urls.push(`https://www.${base}.de${path}`);
+    }
+  }
+  return [...new Set(urls)];
+}
+
+async function tryExtractFromUrls(
+  urls: string[],
+  anbieterNormalized: string,
+  config: AnbieterWebSearchConfig
+): Promise<ExtractedAnbieterContact> {
+  let best: ExtractedAnbieterContact = {
+    email: null,
+    fax: null,
+    postal_address: null,
+    confidence: 'low',
+    source_url: null,
+  };
+
+  for (const url of urls) {
+    try {
+      const html = await fetchPageHtml(url, config);
+      if (!html) continue;
+      const extracted = extractContactFromHtml(html, url, anbieterNormalized);
+      if (!extracted.email) continue;
+      if (!best.email || confidenceRank(extracted.confidence) > confidenceRank(best.confidence)) {
+        best = extracted;
+      }
+      if (best.confidence === 'high') break;
+    } catch {
+      // try next guess URL
+    }
+  }
+
+  return best;
 }
