@@ -47,6 +47,7 @@ const envSchema = z
     OPENAI_API_KEY: z.string().trim().min(1).optional(),
     OPENAI_MODEL: z.string().trim().min(1).default('gpt-4.1-mini'),
     OPENAI_BASE_URL: z.string().trim().url().default('https://api.openai.com/v1'),
+    BRAVE_SEARCH_API_KEY: z.string().trim().min(1).optional(),
   })
   .superRefine((env, ctx) => {
     if (env.NODE_ENV === 'production' && env.MCP_AUTH_ENABLED !== true) {

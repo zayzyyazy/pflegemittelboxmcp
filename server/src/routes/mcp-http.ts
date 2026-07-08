@@ -70,6 +70,10 @@ import {
   runSafeGetCustomerByPlzGeb,
 } from '../tools/safe-customer-lookup.js';
 import { logCall } from '../db.js';
+import {
+  coerceAnbieterCancellationDraftInput,
+  runAnbieterCancellationDraft,
+} from '../tools/anbieter-cancellation-draft.js';
 
 export const mcpRouter = Router();
 
@@ -289,6 +293,21 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: 'pmb_draft_anbieter_cancellation',
+    description:
+      'Build a human-reviewed cancellation email draft for an old Pflegebox Anbieter. Never sends email.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        anbieter_name: {
+          type: 'string',
+          description: 'Old Anbieter name as captured during the call.',
+        },
+      },
+      required: ['anbieter_name'],
+    },
+  },
+  {
     name: 'pmb_safe_get_customer_by_plz_geb',
     description:
       'Safe CRM lookup by PLZ, house number, and birthday. Returns only { found, id?, birthday_present? }.',
@@ -477,6 +496,13 @@ async function runTool(
         gmailAppPassword: appConfig.GMAIL_SMTP_APP_PASSWORD,
       });
       logCall('pmb_post_call_email_notifier', input, result, null, Date.now() - start);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+
+    case 'pmb_draft_anbieter_cancellation': {
+      const input = coerceAnbieterCancellationDraftInput(args);
+      const result = await runAnbieterCancellationDraft(input);
+      logCall('pmb_draft_anbieter_cancellation', input, result, null, Date.now() - start);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
 

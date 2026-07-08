@@ -49,6 +49,10 @@ import {
   runSafeGetCustomerByPlzGeb,
 } from '../tools/safe-customer-lookup.js';
 import { logCall, getLogs, clearLogs, getSettings, setSetting } from '../db.js';
+import {
+  coerceAnbieterCancellationDraftInput,
+  runAnbieterCancellationDraft,
+} from '../tools/anbieter-cancellation-draft.js';
 import { getPostCallMonitorState, runPostCallMonitorCycle } from '../post-call-monitor.js';
 
 export const apiRouter = Router();
@@ -342,6 +346,20 @@ const TOOL_DEFS = [
     },
   },
   {
+    name: 'pmb_draft_anbieter_cancellation',
+    description:
+      'Build a human-reviewed cancellation email draft for an old Pflegebox Anbieter. Never sends email.',
+    category: 'post_call',
+    safe: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        anbieter_name: { type: 'string', description: 'Old Anbieter name from the call.' },
+      },
+      required: ['anbieter_name'],
+    },
+  },
+  {
     name: 'pmb_safe_get_customer_by_plz_geb',
     description:
       'Safe CRM lookup by PLZ, house number, and birthday. Proxies Marie and returns only { found, id?, birthday_present? }.',
@@ -502,6 +520,10 @@ apiRouter.post('/tools/:name/test', async (req, res) => {
           openaiModel: appConfig.OPENAI_MODEL,
           openaiBaseUrl: appConfig.OPENAI_BASE_URL,
         }
+      );
+    } else if (name === 'pmb_draft_anbieter_cancellation') {
+      output = await runAnbieterCancellationDraft(
+        coerceAnbieterCancellationDraftInput(input as Record<string, unknown>)
       );
     } else if (name === 'pmb_safe_get_customer_by_plz_geb') {
       output = await runSafeGetCustomerByPlzGeb(

@@ -64,6 +64,19 @@ db.exec(`
     reason          TEXT,
     severity        TEXT
   );
+
+  CREATE TABLE IF NOT EXISTS anbieter_contacts (
+    anbieter_name_normalized TEXT PRIMARY KEY,
+    anbieter_name_display    TEXT NOT NULL,
+    email                    TEXT,
+    fax                      TEXT,
+    postal_address           TEXT,
+    confidence               TEXT,
+    human_confirmed          INTEGER NOT NULL DEFAULT 0,
+    source_url               TEXT,
+    last_verified_at         TEXT,
+    updated_at               TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  );
 `);
 
 function ensureCallLogColumns(): void {
@@ -348,4 +361,104 @@ export function recordPostCallAlertHistory(entry: {
 
 export function listRecentPostCallAlerts(limit = 20): PostCallAlertHistoryEntry[] {
   return selectRecentPostCallAlerts.all({ limit }) as unknown as PostCallAlertHistoryEntry[];
+}
+
+// ── Anbieter contact cache ─────────────────────────────────────────────
+
+export interface AnbieterContactRow {
+  anbieter_name_normalized: string;
+  anbieter_name_display: string;
+  email: string | null;
+  fax: string | null;
+  postal_address: string | null;
+  confidence: 'high' | 'medium' | 'low' | null;
+  human_confirmed: number;
+  source_url: string | null;
+  last_verified_at: string | null;
+  updated_at: string;
+}
+
+const selectAnbieterContact = db.prepare(`
+  SELECT *
+  FROM anbieter_contacts
+  WHERE anbieter_name_normalized = @normalized
+  LIMIT 1
+`);
+
+const selectAllAnbieterContacts = db.prepare(`
+  SELECT *
+  FROM anbieter_contacts
+  ORDER BY updated_at DESC
+`);
+
+const upsertAnbieterContactStatement = db.prepare(`
+  INSERT INTO anbieter_contacts (
+    anbieter_name_normalized,
+    anbieter_name_display,
+    email,
+    fax,
+    postal_address,
+    confidence,
+    human_confirmed,
+    source_url,
+    last_verified_at,
+    updated_at
+  ) VALUES (
+    @anbieter_name_normalized,
+    @anbieter_name_display,
+    @email,
+    @fax,
+    @postal_address,
+    @confidence,
+    @human_confirmed,
+    @source_url,
+    @last_verified_at,
+    strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+  )
+  ON CONFLICT(anbieter_name_normalized) DO UPDATE SET
+    anbieter_name_display = excluded.anbieter_name_display,
+    email = excluded.email,
+    fax = excluded.fax,
+    postal_address = excluded.postal_address,
+    confidence = excluded.confidence,
+    human_confirmed = CASE
+      WHEN anbieter_contacts.human_confirmed = 1 THEN 1
+      ELSE excluded.human_confirmed
+    END,
+    source_url = excluded.source_url,
+    last_verified_at = excluded.last_verified_at,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+`);
+
+export function getAnbieterContactByNormalizedName(normalized: string): AnbieterContactRow | null {
+  const row = selectAnbieterContact.get({ normalized }) as AnbieterContactRow | undefined;
+  return row ?? null;
+}
+
+export function listAnbieterContacts(): AnbieterContactRow[] {
+  return selectAllAnbieterContacts.all() as unknown as AnbieterContactRow[];
+}
+
+export function upsertAnbieterContact(entry: {
+  anbieter_name_normalized: string;
+  anbieter_name_display: string;
+  email: string | null;
+  fax?: string | null;
+  postal_address?: string | null;
+  confidence: 'high' | 'medium' | 'low';
+  human_confirmed?: boolean;
+  source_url?: string | null;
+  last_verified_at?: string | null;
+}): void {
+  upsertAnbieterContactStatement.run({
+    anbieter_name_normalized: entry.anbieter_name_normalized,
+    anbieter_name_display: entry.anbieter_name_display,
+    email: entry.email,
+    fax: entry.fax ?? null,
+    postal_address: entry.postal_address ?? null,
+    confidence: entry.confidence,
+    human_confirmed: entry.human_confirmed ? 1 : 0,
+    source_url: entry.source_url ?? null,
+    last_verified_at: entry.last_verified_at ?? null,
+  });
 }

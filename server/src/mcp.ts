@@ -56,6 +56,10 @@ import {
   runSafeGetCustomerByPlzGeb,
 } from './tools/safe-customer-lookup.js';
 import { logCall } from './db.js';
+import {
+  coerceAnbieterCancellationDraftInput,
+  runAnbieterCancellationDraft,
+} from './tools/anbieter-cancellation-draft.js';
 
 // Active legacy SSE sessions — used by POST /mcp/messages
 export const sseTransports: Record<string, SSEServerTransport> = {};
@@ -478,6 +482,24 @@ export function createMcpServer(): McpServer {
         gmailAppPassword: appConfig.GMAIL_SMTP_APP_PASSWORD,
       });
       logCall('pmb_post_call_email_notifier', input, result, null, Date.now() - start);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'pmb_draft_anbieter_cancellation',
+    'Build a human-reviewed cancellation email draft for an old Pflegebox Anbieter. ' +
+      'Input: anbieter_name only. Returns to/subject/body with {{customer_*}} placeholders for Marie to fill. Never sends email.',
+    {
+      anbieter_name: z
+        .string()
+        .describe('Old Anbieter name as captured during the call, e.g. "AOK Pflegebox".'),
+    },
+    async (input) => {
+      const start = Date.now();
+      const coerced = coerceAnbieterCancellationDraftInput(input as Record<string, unknown>);
+      const result = await runAnbieterCancellationDraft(coerced);
+      logCall('pmb_draft_anbieter_cancellation', coerced, result, null, Date.now() - start);
       return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
     }
   );

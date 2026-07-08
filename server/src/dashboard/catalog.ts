@@ -44,6 +44,10 @@ import {
   runSafeGetCustomerByInsuranceNumber,
   runSafeGetCustomerByPlzGeb,
 } from '../tools/safe-customer-lookup.js';
+import {
+  coerceAnbieterCancellationDraftInput,
+  runAnbieterCancellationDraft,
+} from '../tools/anbieter-cancellation-draft.js';
 
 export function sanitizeGuardrailInput(input: Record<string, unknown>) {
   const nullableString = (value: unknown): string | null => {
@@ -269,6 +273,20 @@ export const TOOL_DEFS = [
     inputSchema: { type: 'object', properties: {}, required: [] },
   },
   {
+    name: 'pmb_draft_anbieter_cancellation',
+    description:
+      'Build a human-reviewed cancellation email draft for an old Pflegebox Anbieter. Never sends email.',
+    category: 'post_call',
+    safe: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        anbieter_name: { type: 'string', description: 'Old Anbieter name from the call.' },
+      },
+      required: ['anbieter_name'],
+    },
+  },
+  {
     name: 'pmb_safe_get_customer_by_plz_geb',
     description:
       'Safe CRM lookup by PLZ, house number, and birthday. Returns only { found, id?, birthday_present? }.',
@@ -387,6 +405,8 @@ export async function runDashboardTool(name: string, input: Record<string, unkno
         severity: null,
       });
       output = result;
+    } else if (name === 'pmb_draft_anbieter_cancellation') {
+      output = await runAnbieterCancellationDraft(coerceAnbieterCancellationDraftInput(input));
     } else if (name === 'pmb_safe_get_customer_by_plz_geb') {
       output = await runSafeGetCustomerByPlzGeb(coerceSafePlzGebLookupInput(input));
     } else if (name === 'pmb_safe_get_customer_by_insurance_number') {
