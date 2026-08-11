@@ -14,6 +14,11 @@ import {
 } from './tools/delivery-status-reasoner.js';
 import { normalizeVnr } from './tools/normalize-vnr.js';
 import {
+  coerceOutboundContactLookupInput,
+  runKrankenkasseContactLookup,
+  runProviderContactLookup,
+} from './tools/outbound-contact-lookup.js';
+import {
   runPostCallAlertDetector,
 } from './tools/post-call-alert-detector.js';
 import {
@@ -239,6 +244,40 @@ export function createMcpServer(): McpServer {
       const coerced = coerceDebugEchoSessionOnlyInput(input);
       const result = runDebugEchoSessionOnly(coerced);
       logCall('pmb_debug_echo_session_only', coerced, result, null, Date.now() - start);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'pmb_lookup_krankenkasse_contact',
+    'Stateless outbound helper that normalizes a spoken insurer name and returns an official customer-service phone number only when there is a trustworthy unambiguous official match.',
+    {
+      spoken_name: z
+        .string()
+        .describe('Spoken or transcribed insurer name, for example "TK", "Techniker", or "AOK Nordost".'),
+    },
+    async (input) => {
+      const start = Date.now();
+      const coerced = coerceOutboundContactLookupInput(input);
+      const result = runKrankenkasseContactLookup(coerced);
+      logCall('pmb_lookup_krankenkasse_contact', coerced, result, null, Date.now() - start);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'pmb_lookup_provider_contact',
+    'Stateless outbound helper that normalizes a spoken provider name and returns an official provider contact number only when there is a trustworthy unambiguous official match.',
+    {
+      spoken_name: z
+        .string()
+        .describe('Spoken or transcribed provider name, for example "PubliCare" or "Hartmann".'),
+    },
+    async (input) => {
+      const start = Date.now();
+      const coerced = coerceOutboundContactLookupInput(input);
+      const result = runProviderContactLookup(coerced);
+      logCall('pmb_lookup_provider_contact', coerced, result, null, Date.now() - start);
       return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
     }
   );

@@ -30,6 +30,11 @@ import {
 } from '../tools/delivery-status-reasoner.js';
 import { normalizeVnr } from '../tools/normalize-vnr.js';
 import {
+  coerceOutboundContactLookupInput,
+  runKrankenkasseContactLookup,
+  runProviderContactLookup,
+} from '../tools/outbound-contact-lookup.js';
+import {
   coercePostCallAlertDetectorInput,
   runPostCallAlertDetector,
 } from '../tools/post-call-alert-detector.js';
@@ -169,6 +174,36 @@ const MCP_TOOLS = [
         session_id: { type: 'string' },
       },
       required: [],
+    },
+  },
+  {
+    name: 'pmb_lookup_krankenkasse_contact',
+    description:
+      'Stateless outbound helper that normalizes a spoken insurer name and returns an official customer-service phone number only when there is a trustworthy unambiguous official match.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        spoken_name: {
+          type: 'string',
+          description: 'Spoken or transcribed insurer name, for example "TK", "Techniker", or "AOK Nordost".',
+        },
+      },
+      required: ['spoken_name'],
+    },
+  },
+  {
+    name: 'pmb_lookup_provider_contact',
+    description:
+      'Stateless outbound helper that normalizes a spoken provider name and returns an official provider contact number only when there is a trustworthy unambiguous official match.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        spoken_name: {
+          type: 'string',
+          description: 'Spoken or transcribed provider name, for example "PubliCare" or "Hartmann".',
+        },
+      },
+      required: ['spoken_name'],
     },
   },
   {
@@ -404,6 +439,20 @@ async function runTool(
       const input = coerceDebugEchoSessionOnlyInput(args);
       const result = runDebugEchoSessionOnly(input);
       logCall('pmb_debug_echo_session_only', input, result, null, Date.now() - start);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+
+    case 'pmb_lookup_krankenkasse_contact': {
+      const input = coerceOutboundContactLookupInput(args);
+      const result = runKrankenkasseContactLookup(input);
+      logCall('pmb_lookup_krankenkasse_contact', input, result, null, Date.now() - start);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+
+    case 'pmb_lookup_provider_contact': {
+      const input = coerceOutboundContactLookupInput(args);
+      const result = runProviderContactLookup(input);
+      logCall('pmb_lookup_provider_contact', input, result, null, Date.now() - start);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
 

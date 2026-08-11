@@ -17,6 +17,11 @@ import {
 } from '../tools/delivery-status-reasoner.js';
 import { normalizeVnr } from '../tools/normalize-vnr.js';
 import {
+  coerceOutboundContactLookupInput,
+  runKrankenkasseContactLookup,
+  runProviderContactLookup,
+} from '../tools/outbound-contact-lookup.js';
+import {
   coercePostCallAlertDetectorInput,
   runPostCallAlertDetector,
 } from '../tools/post-call-alert-detector.js';
@@ -175,6 +180,40 @@ const TOOL_DEFS = [
         session_id: { type: 'string' },
       },
       required: [],
+    },
+  },
+  {
+    name: 'pmb_lookup_krankenkasse_contact',
+    description:
+      'Stateless outbound helper that normalizes a spoken insurer name and returns an official customer-service phone number only when there is a trustworthy unambiguous official match.',
+    category: 'lookup',
+    safe: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        spoken_name: {
+          type: 'string',
+          description: 'Spoken or transcribed insurer name, for example "TK", "Techniker", or "AOK Nordost".',
+        },
+      },
+      required: ['spoken_name'],
+    },
+  },
+  {
+    name: 'pmb_lookup_provider_contact',
+    description:
+      'Stateless outbound helper that normalizes a spoken provider name and returns an official provider contact number only when there is a trustworthy unambiguous official match.',
+    category: 'lookup',
+    safe: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        spoken_name: {
+          type: 'string',
+          description: 'Spoken or transcribed provider name, for example "PubliCare" or "Hartmann".',
+        },
+      },
+      required: ['spoken_name'],
     },
   },
   {
@@ -453,6 +492,14 @@ apiRouter.post('/tools/:name/test', async (req, res) => {
     } else if (name === 'pmb_debug_echo_session_only') {
       output = runDebugEchoSessionOnly(
         coerceDebugEchoSessionOnlyInput(input as Record<string, unknown>)
+      );
+    } else if (name === 'pmb_lookup_krankenkasse_contact') {
+      output = runKrankenkasseContactLookup(
+        coerceOutboundContactLookupInput(input as Record<string, unknown>)
+      );
+    } else if (name === 'pmb_lookup_provider_contact') {
+      output = runProviderContactLookup(
+        coerceOutboundContactLookupInput(input as Record<string, unknown>)
       );
     } else if (name === 'pmb_verification_method_router') {
       output = runVerificationMethodRouter(
