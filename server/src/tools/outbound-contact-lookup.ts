@@ -592,6 +592,48 @@ const PROVIDER_DIRECTORY: readonly ContactDirectoryEntry[] = [
     confidence: 0.97,
     aliases: ['hartmann', 'paul hartmann', 'hartmann ag', 'hartmann homecare'],
   },
+  {
+    canonicalName: 'Sanubi',
+    phoneNumber: '030 555 7850 65',
+    sourceUrl: 'https://sanubi.de/kontakt/',
+    confidence: 0.97,
+    aliases: ['sanubi', 'sanubibox', 'sanubi box', 'sanubi pflegebox', 'sanu bi'],
+  },
+  {
+    canonicalName: 'Pflegebox (proSenio GmbH)',
+    phoneNumber: '030 863 235 450',
+    sourceUrl: 'https://pflegebox.de/kontakt/',
+    confidence: 0.99,
+    aliases: ['prosenio', 'pro senio', 'prosenio pflegebox', 'pflegebox prosenio'],
+  },
+  {
+    canonicalName: 'curabox Pflege',
+    phoneNumber: '040 / 87 40 97 57',
+    sourceUrl: 'https://www.curabox.de/pflege/kontakt',
+    confidence: 0.98,
+    aliases: ['curabox', 'cura box', 'cura-box', 'curabox pflege'],
+  },
+  {
+    canonicalName: 'Pflegehase',
+    phoneNumber: '0541 4401 69 68',
+    sourceUrl: 'https://pflegehase.de/kontakt/',
+    confidence: 0.98,
+    aliases: ['pflegehase', 'pflege hase'],
+  },
+  {
+    canonicalName: 'Pflegemittelbox.de',
+    phoneNumber: '0211 879 77777',
+    sourceUrl: 'https://pflegemittelbox.de/impressum/',
+    confidence: 0.98,
+    aliases: ['pflegemittelbox', 'pflege mittel box', 'dkn pflege', 'pflegemittelbox de'],
+  },
+  {
+    canonicalName: 'Box4pflege.de',
+    phoneNumber: '+49 7661 9759 015',
+    sourceUrl: 'https://box4pflege.de/impressum/',
+    confidence: 0.96,
+    aliases: ['box4pflege', 'box 4 pflege', 'box fuer pflege', 'box fur pflege'],
+  },
 ] as const;
 
 const GENERIC_INSURER_AMBIGUITIES: Record<string, string[]> = {
@@ -603,6 +645,23 @@ const GENERIC_INSURER_AMBIGUITIES: Record<string, string[]> = {
     )
   ),
   ikk: uniqueCanonicalNames(INSURER_DIRECTORY.filter((entry) => entry.canonicalName.startsWith('IKK '))),
+};
+
+const GENERIC_PROVIDER_AMBIGUITIES: Record<string, string[]> = {
+  pflegebox: [
+    'Pflegebox (proSenio GmbH)',
+    'Sanubi',
+    'curabox Pflege',
+    'Pflegemittelbox.de',
+    'Box4pflege.de',
+  ],
+  'pflege box': [
+    'Pflegebox (proSenio GmbH)',
+    'Sanubi',
+    'curabox Pflege',
+    'Pflegemittelbox.de',
+    'Box4pflege.de',
+  ],
 };
 
 const INSURER_ALIAS_INDEX = createAliasIndex(INSURER_DIRECTORY);
@@ -637,5 +696,6 @@ export function runProviderContactLookup(
 ): OutboundContactLookupResult {
   return runLookup(input, PROVIDER_ALIAS_INDEX, buildProviderCandidates, {
     entityLabel: 'provider',
+    ambiguousCandidatesByNormalizedQuery: GENERIC_PROVIDER_AMBIGUITIES,
   });
 }

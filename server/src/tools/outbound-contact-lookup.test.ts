@@ -18,6 +18,20 @@ function providerLookup(name: string) {
   );
 }
 
+function assertProviderFound(
+  spokenName: string,
+  matchedName: string,
+  phoneNumber: string
+): void {
+  const result = providerLookup(spokenName);
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'found');
+  assert.equal(result.matched_name, matchedName);
+  assert.equal(result.phone_number, phoneNumber);
+  assert.ok(result.matched_alias);
+  assert.equal(result.candidates.length, 0);
+}
+
 function assertInsurerFound(
   spokenName: string,
   matchedName: string,
@@ -134,21 +148,73 @@ test('returns not_found for an unknown insurer', () => {
 });
 
 test('matches provider name variant to PubliCare official contact number', () => {
-  const result = providerLookup('Public Care');
+  const result = providerLookup('PubliCare');
 
   assert.equal(result.ok, true);
   assert.equal(result.status, 'found');
   assert.equal(result.matched_name, 'PubliCare GmbH');
   assert.equal(result.phone_number, '0800 7090490');
   assert.match(result.source_url ?? '', /publicare-gmbh\.de/);
+});
+
+test('matches lower-case publicare variant', () => {
+  assertProviderFound('publicare', 'PubliCare GmbH', '0800 7090490');
+});
+
+test('matches transcribed Public Care variant to PubliCare', () => {
+  const result = providerLookup('Public Care');
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'found');
+  assert.equal(result.matched_name, 'PubliCare GmbH');
+  assert.equal(result.phone_number, '0800 7090490');
   assert.equal(result.matched_alias, 'public care');
 });
 
 test('matches provider punctuation variant to PAUL HARTMANN AG', () => {
-  const result = providerLookup('Paul-Hartmann AG');
+  assertProviderFound('Paul-Hartmann AG', 'PAUL HARTMANN AG', '0800 000 52 55');
+});
 
-  assert.equal(result.ok, true);
-  assert.equal(result.status, 'found');
-  assert.equal(result.matched_name, 'PAUL HARTMANN AG');
-  assert.equal(result.phone_number, '0800 000 52 55');
+test('matches HARTMANN spoken provider name', () => {
+  assertProviderFound('HARTMANN', 'PAUL HARTMANN AG', '0800 000 52 55');
+});
+
+test('matches sanubi official provider entry', () => {
+  assertProviderFound('sanubi', 'Sanubi', '030 555 7850 65');
+});
+
+test('matches cura box transcription variant', () => {
+  assertProviderFound('Cura Box', 'curabox Pflege', '040 / 87 40 97 57');
+});
+
+test('returns ambiguous for generic Pflegebox provider name', () => {
+  const result = providerLookup('Pflegebox');
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'ambiguous');
+  assert.equal(result.normalized_input, 'pflegebox');
+  assert.equal(result.matched_alias, 'pflegebox');
+  assert.ok(result.candidates.includes('Pflegebox (proSenio GmbH)'));
+  assert.ok(result.candidates.includes('Sanubi'));
+  assert.ok(result.candidates.includes('curabox Pflege'));
+});
+
+test('returns not_found for Happybox because no trustworthy Pflegehilfsmittel provider match is curated', () => {
+  const result = providerLookup('Happybox');
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'not_found');
+  assert.equal(result.normalized_input, 'happybox');
+  assert.equal(result.matched_alias, null);
+  assert.equal(result.candidates.length, 0);
+});
+
+test('returns not_found for an unknown provider', () => {
+  const result = providerLookup('Mond Versorgung');
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'not_found');
+  assert.equal(result.normalized_input, 'mond versorgung');
+  assert.equal(result.matched_alias, null);
+  assert.equal(result.candidates.length, 0);
 });
