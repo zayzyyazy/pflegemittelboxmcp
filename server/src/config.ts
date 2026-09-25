@@ -7,6 +7,8 @@ const envSchema = z
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
     ENV_LABEL: z.string().trim().min(1).default('local'),
     PUBLIC_BASE_URL: z.string().trim().url().optional(),
+    GOOGLE_APPOINTMENT_WEBAPP_URL: z.string().trim().url().optional(),
+    GOOGLE_APPOINTMENT_API_SECRET: z.string().trim().min(1).optional(),
     MCP_AUTH_ENABLED: z.coerce.boolean().default(false),
     MCP_AUTH_TYPE: z.enum(['bearer', 'header']).optional(),
     MCP_AUTH_TOKEN: z.string().trim().min(1).optional(),

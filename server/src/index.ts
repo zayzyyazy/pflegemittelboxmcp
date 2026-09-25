@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { mcpRouter } from './routes/mcp-http.js';
 import { apiRouter } from './routes/api.js';
 import { dashboardApiRouter } from './routes/dashboard-api.js';
+import { createAppointmentsRouter } from './routes/appointments.js';
 import { setSetting } from './db.js';
 import { appConfig } from './config.js';
 import { getPostCallMonitorState, startPostCallMonitor } from './post-call-monitor.js';
@@ -38,6 +39,9 @@ const dashboardAuthMiddleware = createDashboardAuthMiddleware(appConfig);
 // POST /mcp/sse applies express.json() inline (Streamable HTTP, what Leaping uses).
 // POST /mcp/messages does NOT — SSEServerTransport reads the raw body stream.
 app.use('/mcp', mcpAuthMiddleware, mcpRouter);
+
+// Public HTTP bridge; its JSON parser and errors stay isolated from MCP.
+app.use('/appointments', createAppointmentsRouter(appConfig));
 
 // ── Dashboard REST API (JSON body parser applies only here) ──────────────
 app.use('/api', express.json(), apiRouter);
@@ -99,6 +103,8 @@ if (fs.existsSync(dashboardIndexFile)) {
 }
 
 const server = app.listen(appConfig.PORT, () => {
+  console.log(`Appointment WebApp URL configured: ${Boolean(appConfig.GOOGLE_APPOINTMENT_WEBAPP_URL)}`);
+  console.log(`Appointment API secret configured: ${Boolean(appConfig.GOOGLE_APPOINTMENT_API_SECRET)}`);
   const publicBaseUrl =
     appConfig.PUBLIC_BASE_URL ?? `http://0.0.0.0:${appConfig.PORT}`;
   console.log(JSON.stringify({
