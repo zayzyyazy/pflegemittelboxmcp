@@ -17,3 +17,7 @@ server/.env.*
 tmp/
 .cursor/
 pflegemittelbox-mcp/
+
+# Local secrets
+.env
+**/.env

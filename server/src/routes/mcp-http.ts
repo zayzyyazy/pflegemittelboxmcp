@@ -44,11 +44,13 @@ import {
   runVerificationBrain,
 } from '../tools/verification-brain.js';
 import { logCall } from '../db.js';
+import { appointmentTools, runAppointmentTool } from '../tools/appointments.js';
 
 export const mcpRouter = Router();
 
 // ── Shared tool catalogue (single source of truth for Streamable HTTP) ────
 const MCP_TOOLS = [
+  ...appointmentTools,
   {
     name: 'normalize_vnr',
     description:
@@ -311,6 +313,10 @@ async function runTool(
   };
 
   switch (name) {
+    case 'pmb_check_available_slots':
+    case 'pmb_create_appointment':
+      return runAppointmentTool(name, args);
+
     case 'normalize_vnr': {
       const text = args.text;
       if (typeof text !== 'string' || !text.trim())

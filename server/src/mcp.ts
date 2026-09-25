@@ -30,6 +30,8 @@ import {
 } from './tools/verification-method-brains.js';
 import { runVerificationBrain } from './tools/verification-brain.js';
 import { logCall } from './db.js';
+import { checkInput, createInput } from './services/appointments.js';
+import { appointmentTools, runAppointmentTool } from './tools/appointments.js';
 
 // Active legacy SSE sessions — used by POST /mcp/messages
 export const sseTransports: Record<string, SSEServerTransport> = {};
@@ -43,6 +45,19 @@ export function createMcpServer(): McpServer {
     name: 'pflegemittelbox-mcp',
     version: '0.1.0',
   });
+
+  server.tool(
+    'pmb_check_available_slots',
+    appointmentTools[0].description,
+    checkInput.shape,
+    async (input) => runAppointmentTool('pmb_check_available_slots', input)
+  );
+  server.tool(
+    'pmb_create_appointment',
+    appointmentTools[1].description,
+    createInput.shape,
+    async (input) => runAppointmentTool('pmb_create_appointment', input)
+  );
 
   const runNormalizeVnr = async (toolName: string, text: string) => {
     const start = Date.now();
